@@ -81,9 +81,10 @@ export class Renderer {
      */
     static create(canvas: HTMLCanvasElement, width: number, height: number): Promise<Renderer>;
     /**
-     * Desenha um quadro completo: primeiro os ecos (do mais antigo para
-     * o mais novo, já nessa ordem dentro de `engine`), depois o reflexo
-     * atual por cima. Deve ser chamado uma vez por frame, depois de o
+     * Desenha um quadro completo: primeiro o reflexo atual (que serve de
+     * base, preenchendo a tela inteira), depois os ecos (do mais antigo
+     * para o mais novo, já nessa ordem dentro de `engine`) por cima, com
+     * transparência. Deve ser chamado uma vez por frame, depois de o
      * JavaScript já ter chamado `engine.update(now_ms)`.
      */
     render(engine: Engine, now_ms: number, live_width: number, live_height: number, live_rgba: Uint8Array | number[]): void;

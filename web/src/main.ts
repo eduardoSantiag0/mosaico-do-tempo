@@ -301,8 +301,11 @@ function renderWithGpu(_activeCount: number, nowMs: number): void {
 /** Caminho alternativo (sem WebGPU/WebGL2 suficiente): tudo desenhado em Canvas 2D na CPU. */
 function renderWithCanvas2d(activeCount: number): void {
   if (!ctx2d) return;
-  drawEchoesCanvas2d(activeCount);
+  // O reflexo atual é a base (preenche a tela inteira, sem transparência);
+  // os ecos são desenhados DEPOIS, por cima, com opacidade parcial. Na
+  // ordem contrária, o reflexo cobriria os ecos por completo.
   drawCoverMirrored(camera.video, ctx2d, canvas.width, canvas.height);
+  drawEchoesCanvas2d(activeCount);
 }
 
 /**

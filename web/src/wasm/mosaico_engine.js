@@ -231,9 +231,10 @@ export class Renderer {
         return ret;
     }
     /**
-     * Desenha um quadro completo: primeiro os ecos (do mais antigo para
-     * o mais novo, já nessa ordem dentro de `engine`), depois o reflexo
-     * atual por cima. Deve ser chamado uma vez por frame, depois de o
+     * Desenha um quadro completo: primeiro o reflexo atual (que serve de
+     * base, preenchendo a tela inteira), depois os ecos (do mais antigo
+     * para o mais novo, já nessa ordem dentro de `engine`) por cima, com
+     * transparência. Deve ser chamado uma vez por frame, depois de o
      * JavaScript já ter chamado `engine.update(now_ms)`.
      * @param {Engine} engine
      * @param {number} now_ms

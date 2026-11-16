@@ -350,9 +350,10 @@ impl Renderer {
         self.additive_echoes = enabled;
     }
 
-    /// Desenha um quadro completo: primeiro os ecos (do mais antigo para
-    /// o mais novo, já nessa ordem dentro de `engine`), depois o reflexo
-    /// atual por cima. Deve ser chamado uma vez por frame, depois de o
+    /// Desenha um quadro completo: primeiro o reflexo atual (que serve de
+    /// base, preenchendo a tela inteira), depois os ecos (do mais antigo
+    /// para o mais novo, já nessa ordem dentro de `engine`) por cima, com
+    /// transparência. Deve ser chamado uma vez por frame, depois de o
     /// JavaScript já ter chamado `engine.update(now_ms)`.
     pub fn render(
         &mut self,
@@ -376,7 +377,31 @@ impl Renderer {
         let target_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let time_seconds = (now_ms / 1000.0) as f32;
-        let mut is_first_draw = true;
+
+        // O reflexo atual é a BASE: desenhamos ele primeiro (limpando a
+        // tela), e os ecos (vestígios do passado) são desenhados DEPOIS,
+        // por cima, com transparência. Se fosse na ordem contrária, o
+        // reflexo atual (totalmente opaco) cobriria a tela inteira por
+        // cima dos ecos, e nenhum vestígio apareceria nunca.
+        self.live_texture
+            .ensure_size(&self.device, live_width, live_height, "live_texture");
+        self.live_texture.write_pixels(&self.queue, live_rgba);
+
+        let live_uniforms = DrawUniforms {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            opacity: 1.0,
+            age_ratio: 0.0,
+            time_seconds,
+            is_live: 1.0,
+            underwater_intensity: 0.0,
+            underwater_frequency: 0.0,
+            underwater_speed: 0.0,
+            underwater_amplitude: 0.0,
+            dissolve_fragmentation: 0.0,
+            padding: 0.0,
+        };
+        self.draw_quad(&target_view, &self.live_texture.view, live_uniforms, false, true);
 
         let active_count = engine.active_count();
         for index in 0..active_count {
@@ -404,29 +429,8 @@ impl Renderer {
                 padding: 0.0,
             };
 
-            self.draw_quad(&target_view, &self.echo_texture.view, uniforms, self.additive_echoes, is_first_draw);
-            is_first_draw = false;
+            self.draw_quad(&target_view, &self.echo_texture.view, uniforms, self.additive_echoes, false);
         }
-
-        self.live_texture
-            .ensure_size(&self.device, live_width, live_height, "live_texture");
-        self.live_texture.write_pixels(&self.queue, live_rgba);
-
-        let live_uniforms = DrawUniforms {
-            offset_x: 0.0,
-            offset_y: 0.0,
-            opacity: 1.0,
-            age_ratio: 0.0,
-            time_seconds,
-            is_live: 1.0,
-            underwater_intensity: 0.0,
-            underwater_frequency: 0.0,
-            underwater_speed: 0.0,
-            underwater_amplitude: 0.0,
-            dissolve_fragmentation: 0.0,
-            padding: 0.0,
-        };
-        self.draw_quad(&target_view, &self.live_texture.view, live_uniforms, false, is_first_draw);
 
         frame.present();
         Ok(())
