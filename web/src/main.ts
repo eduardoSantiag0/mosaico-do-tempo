@@ -1,14 +1,21 @@
-import initEngine, { Engine, engine_version } from "./wasm/mosaico_engine.js";
+import initEngine, { Engine, Renderer, engine_version } from "./wasm/mosaico_engine.js";
 import { CameraController, CameraError } from "./camera.js";
 import { UI } from "./ui.js";
 
 const canvas = required<HTMLCanvasElement>("#stage");
-const ctx = canvas.getContext("2d", { alpha: false });
-if (!ctx) throw new Error("Canvas 2D não disponível.");
 
 const ui = new UI();
 const camera = new CameraController();
 let engine: Engine;
+
+// Se o navegador não tiver WebGPU nem WebGL2 suficiente, caímos de volta
+// para um desenho mais simples em Canvas 2D (RF: "fallback funcional para
+// navegadores incompatíveis"). Só um dos dois modos é usado por vez,
+// porque um <canvas> só pode ter um tipo de contexto de desenho.
+type RenderMode = "gpu" | "canvas2d";
+let renderMode: RenderMode = "gpu";
+let gpuRenderer: Renderer | null = null;
+let ctx2d: CanvasRenderingContext2D | null = null;
 
 // Memory captures are taken at a low, fixed resolution — never the full
 // camera frame — to keep per-record cost small across up to ~120s of history.
@@ -20,6 +27,13 @@ const echoCanvas = document.createElement("canvas");
 const echoCtx = echoCanvas.getContext("2d")!;
 let lastCaptureMs = -Infinity;
 
+// The live reflection is captured at a higher resolution than memory
+// echoes (for sharpness), but still capped well below the full device
+// resolution to keep the CPU readback (getImageData) affordable every frame.
+const LIVE_MAX_DIM = 640;
+const liveCanvas = document.createElement("canvas");
+const liveCtx = liveCanvas.getContext("2d", { willReadFrequently: true })!;
+
 let rafHandle = 0;
 let running = false;
 
@@ -28,11 +42,17 @@ async function boot(): Promise<void> {
   engine = new Engine();
   console.info(`[mosaico] engine wasm v${engine_version()} carregado`);
 
+  resizeCanvas();
+  await initRenderer();
+
   ui.onStart(() => void startExperience());
   ui.onRetry(() => void startExperience());
   ui.onExit(() => stopExperience());
 
-  window.addEventListener("resize", resizeCanvas);
+  window.addEventListener("resize", () => {
+    resizeCanvas();
+    if (renderMode === "gpu") gpuRenderer?.resize(canvas.width, canvas.height);
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       pauseLoop();
@@ -40,8 +60,19 @@ async function boot(): Promise<void> {
       resumeLoop();
     }
   });
+}
 
-  resizeCanvas();
+/** Tries to set up the WebGPU/WebGL2 renderer; falls back to Canvas 2D if unavailable. */
+async function initRenderer(): Promise<void> {
+  try {
+    gpuRenderer = await Renderer.create(canvas, canvas.width, canvas.height);
+    renderMode = "gpu";
+    console.info("[mosaico] renderização via WebGPU/WebGL2");
+  } catch (err) {
+    console.warn("[mosaico] WebGPU/WebGL2 indisponível, usando fallback em Canvas 2D:", err);
+    ctx2d = canvas.getContext("2d", { alpha: false });
+    renderMode = "canvas2d";
+  }
 }
 
 async function startExperience(): Promise<void> {
@@ -54,7 +85,6 @@ async function startExperience(): Promise<void> {
   }
 
   ui.showScreen("experience");
-  resizeCanvas();
   resumeLoop();
 }
 
@@ -87,10 +117,39 @@ function renderFrame(): void {
   }
 
   const activeCount = engine.update(now);
-  drawEchoes(activeCount);
-  drawCoverMirrored(camera.video, ctx!, canvas.width, canvas.height);
+
+  try {
+    if (renderMode === "gpu" && gpuRenderer) {
+      renderWithGpu(activeCount, now);
+    } else if (ctx2d) {
+      renderWithCanvas2d(activeCount);
+    }
+  } catch (err) {
+    // Um erro isolado de um quadro não deve travar a experiência: o
+    // reflexo precisa continuar aparecendo nos próximos quadros.
+    console.error("[mosaico] erro ao desenhar o quadro:", err);
+  }
 
   rafHandle = requestAnimationFrame(renderFrame);
+}
+
+/** Caminho principal: desenha tudo na GPU (WebGPU/WebGL2) através do Renderer em Rust. */
+function renderWithGpu(_activeCount: number, nowMs: number): void {
+  const { video } = camera;
+  if (video.videoWidth === 0 || !gpuRenderer) return;
+
+  drawCoverMirrored(video, liveCtx, liveCanvas.width, liveCanvas.height);
+  const liveFrame = liveCtx.getImageData(0, 0, liveCanvas.width, liveCanvas.height);
+  const liveBytes = new Uint8Array(liveFrame.data.buffer, liveFrame.data.byteOffset, liveFrame.data.byteLength);
+
+  gpuRenderer.render(engine, nowMs, liveCanvas.width, liveCanvas.height, liveBytes);
+}
+
+/** Caminho alternativo (sem WebGPU/WebGL2 suficiente): tudo desenhado em Canvas 2D na CPU. */
+function renderWithCanvas2d(activeCount: number): void {
+  if (!ctx2d) return;
+  drawEchoesCanvas2d(activeCount);
+  drawCoverMirrored(camera.video, ctx2d, canvas.width, canvas.height);
 }
 
 /**
@@ -141,8 +200,9 @@ function captureIntoMemory(nowMs: number): void {
   engine.insertFrame(nowMs, frame.width, frame.height, 1.0, bytes);
 }
 
-/** Paints every active memory record, oldest first, beneath the live reflection. */
-function drawEchoes(activeCount: number): void {
+/** Paints every active memory record, oldest first, beneath the live reflection (fallback path only). */
+function drawEchoesCanvas2d(activeCount: number): void {
+  if (!ctx2d) return;
   for (let i = 0; i < activeCount; i++) {
     const w = engine.activeWidth(i);
     const h = engine.activeHeight(i);
@@ -157,12 +217,20 @@ function drawEchoes(activeCount: number): void {
     const offsetX = engine.activeOffsetX(i) * canvas.width;
     const offsetY = engine.activeOffsetY(i) * canvas.height;
 
-    ctx!.save();
-    ctx!.globalAlpha = engine.activeOpacity(i);
-    ctx!.translate(offsetX, offsetY);
-    ctx!.drawImage(echoCanvas, 0, 0, canvas.width, canvas.height);
-    ctx!.restore();
+    ctx2d.save();
+    ctx2d.globalAlpha = engine.activeOpacity(i);
+    ctx2d.translate(offsetX, offsetY);
+    ctx2d.drawImage(echoCanvas, 0, 0, canvas.width, canvas.height);
+    ctx2d.restore();
   }
+}
+
+/** Computes a downscaled width/height that preserves `aspect`, capped at `maxDim` on the long edge. */
+function downscaledSize(aspect: number, maxDim: number): { width: number; height: number } {
+  if (aspect >= 1) {
+    return { width: maxDim, height: Math.max(1, Math.round(maxDim / aspect)) };
+  }
+  return { width: Math.max(1, Math.round(maxDim * aspect)), height: maxDim };
 }
 
 function resizeCanvas(): void {
@@ -171,14 +239,15 @@ function resizeCanvas(): void {
   canvas.width = Math.round(rect.width * dpr);
   canvas.height = Math.round(rect.height * dpr);
 
-  const captureAspect = canvas.width / canvas.height;
-  if (captureAspect >= 1) {
-    captureCanvas.width = CAPTURE_MAX_DIM;
-    captureCanvas.height = Math.max(1, Math.round(CAPTURE_MAX_DIM / captureAspect));
-  } else {
-    captureCanvas.height = CAPTURE_MAX_DIM;
-    captureCanvas.width = Math.max(1, Math.round(CAPTURE_MAX_DIM * captureAspect));
-  }
+  const aspect = canvas.width / canvas.height;
+
+  const captureSize = downscaledSize(aspect, CAPTURE_MAX_DIM);
+  captureCanvas.width = captureSize.width;
+  captureCanvas.height = captureSize.height;
+
+  const liveSize = downscaledSize(aspect, LIVE_MAX_DIM);
+  liveCanvas.width = liveSize.width;
+  liveCanvas.height = liveSize.height;
 }
 
 function errorTitleFor(err: CameraError): string {

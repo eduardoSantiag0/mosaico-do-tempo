@@ -5,3 +5,5 @@ web/src/wasm/
 .DS_Store
 *.log
 web/tsconfig.tsbuildinfo
+.idea/
+.vscode/

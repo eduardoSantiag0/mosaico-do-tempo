@@ -274,6 +274,10 @@ pub struct RenderRecord {
     pub layer: LayerKind,
     pub timestamp_ms: f64,
     pub age_ms: f64,
+    /// A idade do registro, de 0.0 (recém-nascido) a 1.0 (no limite de
+    /// idade, quase desaparecendo). Usado pelos shaders (renderer.rs)
+    /// para decidir o quanto distorcer/fragmentar a imagem.
+    pub age_ratio: f32,
     pub width: u32,
     pub height: u32,
     pub opacity: f32,
@@ -348,11 +352,21 @@ impl TemporalMemory {
         ];
 
         for (kind, layer) in layers {
+            let max_age_ms = layer.config.max_age_ms;
             for (record, fade) in layer.active(now_ms) {
+                let mut age_ratio = fade.age_ms / max_age_ms;
+                if age_ratio < 0.0 {
+                    age_ratio = 0.0;
+                }
+                if age_ratio > 1.0 {
+                    age_ratio = 1.0;
+                }
+
                 all.push(RenderRecord {
                     layer: kind,
                     timestamp_ms: record.timestamp_ms,
                     age_ms: fade.age_ms,
+                    age_ratio: age_ratio as f32,
                     width: record.width,
                     height: record.height,
                     opacity: fade.opacity,

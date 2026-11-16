@@ -9,10 +9,21 @@
 // largura do registro número 1?", etc., um de cada vez. É um padrão simples
 // e evita ter que converter estruturas complicadas entre as duas linguagens.
 
+mod effects;
 mod memory;
+
+// O Renderer usa a GPU através do navegador (via WebGPU/WebGL2), então só
+// faz sentido existir quando o código é compilado para WebAssembly. Ao
+// rodar `cargo test` normalmente (programa nativo do Windows/Linux/Mac,
+// usado para testar `memory.rs`), esse módulo nem é compilado.
+#[cfg(target_arch = "wasm32")]
+mod renderer;
 
 use memory::{LayerConfig, LayerKind, MemoryRecord, RenderRecord, TemporalMemory};
 use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+pub use renderer::Renderer;
 
 /// Só serve para confirmar, do lado do JavaScript, que o WebAssembly
 /// carregou corretamente.
@@ -189,11 +200,29 @@ impl Engine {
         self.memory.total_bytes()
     }
 
+    /// Quantos registros estão ativos agora (depois da última chamada a
+    /// `update`). O `renderer.rs` usa isso para saber quantas vezes deve
+    /// desenhar um "eco" na tela.
+    #[wasm_bindgen(js_name = activeCount)]
+    pub fn active_count(&self) -> usize {
+        self.active_cache.len()
+    }
+
     /// Apaga tudo o que está guardado. Deve ser chamado quando a
     /// experiência termina (ver RF10).
     pub fn reset(&mut self) {
         self.memory.clear();
         self.active_cache.clear();
+    }
+
+    /// Esta função NÃO é exposta para o JavaScript (não tem
+    /// `#[wasm_bindgen]`). Ela é usada só por outro código Rust do mesmo
+    /// crate — no caso, o `renderer.rs` — para ler um registro ativo
+    /// inteiro de uma vez, em vez de chamar vários getters separados como
+    /// `active_width`, `active_opacity`, etc. Isso evita cópias
+    /// desnecessárias quando quem está chamando já é Rust.
+    pub(crate) fn active_record(&self, index: usize) -> Option<&RenderRecord> {
+        self.active_cache.get(index)
     }
 }
 

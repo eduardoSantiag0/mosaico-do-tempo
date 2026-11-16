@@ -9,10 +9,14 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 wasm-bindgen = "0.2.95"
 js-sys = "0.3.72"
-web-sys = { version = "0.3.72", features = ["console"] }
+web-sys = { version = "0.3.72", features = ["HtmlCanvasElement", "console"] }
+wgpu = { version = "0.20.1", default-features = false, features = ["webgpu", "webgl", "wgsl", "fragile-send-sync-non-atomic-wasm"] }
+wasm-bindgen-futures = "0.4"
+bytemuck = { version = "1.25.2", features = ["derive"] }
 
 [profile.release]
 opt-level = "s"
 lto = true
 
 [dev-dependencies]
+naga = { version = "0.20.0", default-features = false, features = ["wgsl-in"] }
