@@ -155,6 +155,14 @@ function applyQualityLevel(level: QualityLevel): void {
   }
 }
 
+// Quanto tempo esperar, depois de iniciar a câmera, antes de considerar
+// que algo deu errado se nenhum quadro de vídeo chegou a tocar de
+// verdade. Sem isso, um problema silencioso (por exemplo, o navegador
+// bloqueando `video.play()`) deixaria a tela preta para sempre, sem
+// nenhuma explicação para o visitante.
+const PLAYBACK_WATCHDOG_MS = 4000;
+let playbackWatchdogHandle = 0;
+
 async function startExperience(): Promise<void> {
   try {
     await camera.start();
@@ -166,9 +174,23 @@ async function startExperience(): Promise<void> {
 
   ui.showScreen("experience");
   resumeLoop();
+
+  playbackWatchdogHandle = window.setTimeout(() => {
+    const { video } = camera;
+    const isActuallyPlaying = video.readyState >= video.HAVE_CURRENT_DATA && video.currentTime > 0;
+    if (camera.isActive && !isActuallyPlaying) {
+      console.error("[mosaico] a câmera foi autorizada, mas nenhum quadro de vídeo chegou a tempo");
+      stopExperience();
+      ui.showError(
+        "Não foi possível exibir a câmera",
+        "A câmera foi autorizada, mas a imagem não chegou a aparecer. Tente novamente, recarregue a página ou use outro navegador.",
+      );
+    }
+  }, PLAYBACK_WATCHDOG_MS);
 }
 
 function stopExperience(): void {
+  clearTimeout(playbackWatchdogHandle);
   pauseLoop();
   camera.stop();
   engine.reset();

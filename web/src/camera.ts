@@ -63,11 +63,15 @@ export class CameraController {
     }
 
     this.video.srcObject = this.stream;
-    await this.video.play().catch(() => {
-      // Autoplay can be blocked until a user gesture resumes it; the start
-      // button click that triggered this already counts as that gesture
-      // on every browser we target, so a thrown promise here is ignorable.
-    });
+    try {
+      await this.video.play();
+    } catch (err) {
+      // Alguns navegadores bloqueiam o autoplay até um gesto do usuário;
+      // o clique no botão "Iniciar" já deveria contar como esse gesto,
+      // mas registramos o erro para facilitar o diagnóstico caso não
+      // conte em algum navegador específico.
+      console.warn("[mosaico] video.play() falhou:", err);
+    }
 
     await this.waitForDimensions();
   }

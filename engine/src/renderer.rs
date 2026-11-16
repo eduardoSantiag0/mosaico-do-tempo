@@ -133,6 +133,7 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface_format: wgpu::TextureFormat,
+    surface_alpha_mode: wgpu::CompositeAlphaMode,
     surface_width: u32,
     surface_height: u32,
 
@@ -212,6 +213,7 @@ impl Renderer {
             .find(|format| !format.is_srgb())
             .unwrap_or(capabilities.formats[0]);
 
+        let surface_alpha_mode = capabilities.alpha_modes[0];
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -219,7 +221,7 @@ impl Renderer {
             height: height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
-            alpha_mode: capabilities.alpha_modes[0],
+            alpha_mode: surface_alpha_mode,
             view_formats: vec![],
         };
         surface.configure(&device, &config);
@@ -289,6 +291,7 @@ impl Renderer {
             device,
             queue,
             surface_format,
+            surface_alpha_mode,
             surface_width: width.max(1),
             surface_height: height.max(1),
             bind_group_layout,
@@ -314,7 +317,7 @@ impl Renderer {
             height: self.surface_height,
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            alpha_mode: self.surface_alpha_mode,
             view_formats: vec![],
         };
         self.surface.configure(&self.device, &config);
