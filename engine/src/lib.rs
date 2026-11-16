@@ -33,11 +33,11 @@ pub fn engine_version() -> String {
 }
 
 /// Converte o nome da camada (texto, vindo do JavaScript) para o tipo
-/// `LayerKind` que usamos internamente em Rust.
+/// `LayerKind` que usamos internamente em Rust. Note que não existe mais
+/// uma camada "short" aqui: o rastro de movimento recente agora é um
+/// acumulador contínuo na GPU (veja `renderer.rs`), não um conjunto de
+/// registros discretos como intermediate/long.
 fn layer_kind_from_str(name: &str) -> Result<LayerKind, JsValue> {
-    if name == "short" {
-        return Ok(LayerKind::Short);
-    }
     if name == "intermediate" {
         return Ok(LayerKind::Intermediate);
     }
@@ -68,8 +68,11 @@ impl Engine {
         }
     }
 
-    /// Muda a configuração de uma das três camadas ("short", "intermediate"
-    /// ou "long"). As durações são em milissegundos.
+    /// Muda a configuração de uma das duas camadas discretas
+    /// ("intermediate" ou "long"). As durações são em milissegundos.
+    /// `reappearance_strength`/`reappearance_frequency` controlam o
+    /// efeito de "reaparecimentos ocasionais" (ver `memory.rs`); passe
+    /// `0.0` para `reappearance_strength` para um fade liso, sem pulsar.
     #[wasm_bindgen(js_name = configureLayer)]
     pub fn configure_layer(
         &mut self,
@@ -80,6 +83,8 @@ impl Engine {
         base_weight: f32,
         fade_power: f32,
         drift_amount: f32,
+        reappearance_strength: f32,
+        reappearance_frequency: f32,
     ) -> Result<(), JsValue> {
         let kind = layer_kind_from_str(layer)?;
         let new_config = LayerConfig {
@@ -89,6 +94,8 @@ impl Engine {
             base_weight,
             fade_power,
             drift_amount,
+            reappearance_strength,
+            reappearance_frequency,
         };
         self.memory.layer_mut(kind).reconfigure(new_config);
         Ok(())
@@ -127,7 +134,6 @@ impl Engine {
         let found = self.active_cache.get(index);
         let name = match found {
             Some(render_record) => match render_record.layer {
-                LayerKind::Short => "short",
                 LayerKind::Intermediate => "intermediate",
                 LayerKind::Long => "long",
             },
@@ -204,8 +210,9 @@ impl Engine {
         }
     }
 
-    /// Quantos bytes de memória estão sendo usados, no total, pelas três
-    /// camadas. Útil para diagnóstico/depuração.
+    /// Quantos bytes de memória estão sendo usados, no total, pelas duas
+    /// camadas discretas (o acumulador de rastro recente, na GPU, não
+    /// entra nessa conta). Útil para diagnóstico/depuração.
     #[wasm_bindgen(js_name = totalBytes)]
     pub fn total_bytes(&self) -> usize {
         self.memory.total_bytes()
@@ -256,16 +263,13 @@ mod tests {
     fn engine_insert_and_update_cycle() {
         let mut engine = Engine::new();
         engine
-            .configure_layer("short", 10, 0.0, 5_000.0, 1.0, 1.0, 0.0)
+            .configure_layer("intermediate", 10, 0.0, 5_000.0, 1.0, 1.0, 0.0, 0.0, 0.0)
             .unwrap();
 
-        // `insert_frame` entrega a captura para as três camadas. Para este
-        // teste só nos interessa a camada "short", então desligamos as
-        // outras duas (capacidade 0 = nunca aceita nada).
-        engine
-            .configure_layer("intermediate", 0, 0.0, 0.0, 0.0, 1.0, 0.0)
-            .unwrap();
-        engine.configure_layer("long", 0, 0.0, 0.0, 0.0, 1.0, 0.0).unwrap();
+        // `insert_frame` entrega a captura para as duas camadas. Para
+        // este teste só nos interessa a "intermediate", então desligamos
+        // a "long" (capacidade 0 = nunca aceita nada).
+        engine.configure_layer("long", 0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0).unwrap();
 
         let pixels = vec![200u8; 2 * 2 * 4];
         engine.insert_frame(0.0, 2, 2, 1.0, &pixels);

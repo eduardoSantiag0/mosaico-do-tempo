@@ -1,6 +1,6 @@
-// Carrega os parâmetros artísticos de `config/effects.json` (ver seção 8
-// do enunciado). A ideia é que esses números possam mudar sem precisar
-// editar o código — nem o TypeScript, nem os shaders em Rust.
+// Carrega os parâmetros artísticos de `config/effects.json`. A ideia é
+// que esses números possam mudar sem precisar editar o código — nem o
+// TypeScript, nem os shaders em Rust.
 
 export interface MemoryLayerConfig {
   captureIntervalMs: number;
@@ -9,15 +9,28 @@ export interface MemoryLayerConfig {
   baseWeight: number;
   fadePower: number;
   driftAmount: number;
+  /// 0.0 desliga o efeito de "reaparecimentos ocasionais" (fade liso).
+  reappearanceStrength: number;
+  reappearanceFrequency: number;
+}
+
+/** Cadência/resolução (só do lado do JavaScript) com que alimentamos o acumulador de rastro na GPU. */
+export interface TrailCaptureConfig {
+  captureMaxDim: number;
+  captureIntervalMs: number;
 }
 
 export interface EffectsConfig {
-  underwaterIntensity: number;
-  underwaterFrequency: number;
-  underwaterSpeed: number;
-  underwaterAmplitude: number;
+  displacementIntensity: number;
+  displacementFrequency: number;
+  displacementSpeed: number;
+  displacementAmplitude: number;
   dissolveFragmentation: number;
   additiveEchoes: boolean;
+  /** O quanto o acumulador de rastro "esquece" por segundo. */
+  trailDecayPerSecond: number;
+  /** Opacidade com que cada captura nova é somada ao acumulador de rastro. */
+  trailCaptureOpacity: number;
 }
 
 export interface CaptureConfig {
@@ -30,10 +43,10 @@ export interface CaptureConfig {
 
 export interface AppConfig {
   memory: {
-    short: MemoryLayerConfig;
     intermediate: MemoryLayerConfig;
     long: MemoryLayerConfig;
   };
+  trail: TrailCaptureConfig;
   effects: EffectsConfig;
   capture: CaptureConfig;
   devPanel: { enabled: boolean };
@@ -47,21 +60,44 @@ export interface AppConfig {
  */
 const FALLBACK_CONFIG: AppConfig = {
   memory: {
-    short: { captureIntervalMs: 80, maxAgeMs: 5000, capacity: 48, baseWeight: 0.9, fadePower: 1.0, driftAmount: 0.0 },
-    intermediate: { captureIntervalMs: 600, maxAgeMs: 30000, capacity: 50, baseWeight: 0.55, fadePower: 1.4, driftAmount: 0.03 },
-    long: { captureIntervalMs: 4000, maxAgeMs: 120000, capacity: 30, baseWeight: 0.3, fadePower: 2.4, driftAmount: 0.06 },
+    intermediate: {
+      captureIntervalMs: 650,
+      maxAgeMs: 26000,
+      capacity: 40,
+      baseWeight: 0.42,
+      fadePower: 1.4,
+      driftAmount: 0.025,
+      reappearanceStrength: 0.0,
+      reappearanceFrequency: 0.0,
+    },
+    long: {
+      captureIntervalMs: 4500,
+      maxAgeMs: 110000,
+      capacity: 22,
+      baseWeight: 0.2,
+      fadePower: 2.0,
+      driftAmount: 0.05,
+      reappearanceStrength: 0.65,
+      reappearanceFrequency: 0.0003926991,
+    },
+  },
+  trail: {
+    captureMaxDim: 192,
+    captureIntervalMs: 90,
   },
   effects: {
-    underwaterIntensity: 0.5,
-    underwaterFrequency: 2.2,
-    underwaterSpeed: 0.6,
-    underwaterAmplitude: 0.02,
-    dissolveFragmentation: 0.7,
+    displacementIntensity: 0.4,
+    displacementFrequency: 2.0,
+    displacementSpeed: 0.45,
+    displacementAmplitude: 0.018,
+    dissolveFragmentation: 0.55,
     additiveEchoes: false,
+    trailDecayPerSecond: 1.5,
+    trailCaptureOpacity: 0.8,
   },
   capture: {
-    memoryMaxDim: 96,
-    memoryIntervalMs: 80,
+    memoryMaxDim: 160,
+    memoryIntervalMs: 500,
     liveMaxDim: 1280,
     segmentationMaxDim: 256,
     segmentationIntervalMs: 200,

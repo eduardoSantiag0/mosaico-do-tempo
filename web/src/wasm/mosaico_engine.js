@@ -115,8 +115,11 @@ export class Engine {
         return ret >>> 0;
     }
     /**
-     * Muda a configuração de uma das três camadas ("short", "intermediate"
-     * ou "long"). As durações são em milissegundos.
+     * Muda a configuração de uma das duas camadas discretas
+     * ("intermediate" ou "long"). As durações são em milissegundos.
+     * `reappearance_strength`/`reappearance_frequency` controlam o
+     * efeito de "reaparecimentos ocasionais" (ver `memory.rs`); passe
+     * `0.0` para `reappearance_strength` para um fade liso, sem pulsar.
      * @param {string} layer
      * @param {number} capacity
      * @param {number} capture_interval_ms
@@ -124,17 +127,21 @@ export class Engine {
      * @param {number} base_weight
      * @param {number} fade_power
      * @param {number} drift_amount
+     * @param {number} reappearance_strength
+     * @param {number} reappearance_frequency
      */
-    configureLayer(layer, capacity, capture_interval_ms, max_age_ms, base_weight, fade_power, drift_amount) {
+    configureLayer(layer, capacity, capture_interval_ms, max_age_ms, base_weight, fade_power, drift_amount, reappearance_strength, reappearance_frequency) {
         const val2 = +capacity;
         const val3 = +capture_interval_ms;
         const val4 = +max_age_ms;
         const val5 = +base_weight;
         const val6 = +fade_power;
         const val7 = +drift_amount;
+        const val8 = +reappearance_strength;
+        const val9 = +reappearance_frequency;
         const ptr0 = passStringToWasm0(layer, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engine_configureLayer(this.__wbg_ptr, ptr0, len0, val2, val3, val4, val5, val6, val7);
+        const ret = wasm.engine_configureLayer(this.__wbg_ptr, ptr0, len0, val2, val3, val4, val5, val6, val7, val8, val9);
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
         }
@@ -172,8 +179,9 @@ export class Engine {
         wasm.engine_reset(this.__wbg_ptr);
     }
     /**
-     * Quantos bytes de memória estão sendo usados, no total, pelas três
-     * camadas. Útil para diagnóstico/depuração.
+     * Quantos bytes de memória estão sendo usados, no total, pelas duas
+     * camadas discretas (o acumulador de rastro recente, na GPU, não
+     * entra nessa conta). Útil para diagnóstico/depuração.
      * @returns {number}
      */
     totalBytes() {
@@ -216,16 +224,19 @@ export class Renderer {
         wasm.__wbg_renderer_free(ptr, 0);
     }
     /**
-     * Ajusta os parâmetros artísticos dos efeitos (RF06/RF07). Pensado
-     * para ser chamado pelo painel de desenvolvimento (Etapa 5).
-     * @param {number} underwater_intensity
-     * @param {number} underwater_frequency
-     * @param {number} underwater_speed
-     * @param {number} underwater_amplitude
+     * Ajusta os parâmetros artísticos dos efeitos: o campo de
+     * deslocamento temporal, a dissolução dos ecos, e o ritmo com que
+     * o acumulador de rastro desbota.
+     * @param {number} displacement_intensity
+     * @param {number} displacement_frequency
+     * @param {number} displacement_speed
+     * @param {number} displacement_amplitude
      * @param {number} dissolve_fragmentation
+     * @param {number} trail_decay_per_second
+     * @param {number} trail_capture_opacity
      */
-    configureEffects(underwater_intensity, underwater_frequency, underwater_speed, underwater_amplitude, dissolve_fragmentation) {
-        wasm.renderer_configureEffects(this.__wbg_ptr, underwater_intensity, underwater_frequency, underwater_speed, underwater_amplitude, dissolve_fragmentation);
+    configureEffects(displacement_intensity, displacement_frequency, displacement_speed, displacement_amplitude, dissolve_fragmentation, trail_decay_per_second, trail_capture_opacity) {
+        wasm.renderer_configureEffects(this.__wbg_ptr, displacement_intensity, displacement_frequency, displacement_speed, displacement_amplitude, dissolve_fragmentation, trail_decay_per_second, trail_capture_opacity);
     }
     /**
      * Cria o Renderer. É uma função assíncrona porque pedir acesso à
@@ -242,32 +253,52 @@ export class Renderer {
         return ret;
     }
     /**
-     * Desenha um quadro completo: primeiro o reflexo atual (que serve de
-     * base, preenchendo a tela inteira), depois os ecos (do mais antigo
-     * para o mais novo, já nessa ordem dentro de `engine`) por cima, com
-     * transparência. Deve ser chamado uma vez por frame, depois de o
-     * JavaScript já ter chamado `engine.update(now_ms)`.
+     * Desenha um quadro completo. Ordem (de baixo para cima):
+     *
+     * 1. Atualiza o acumulador de rastro (desbota o antigo, soma a
+     *    captura nova).
+     * 2. Reflexo atual — a base, deformada localmente pelo campo de
+     *    deslocamento temporal onde o acumulador indica presença recente.
+     * 3. Ecos da memória prolongada, depois intermediária.
+     * 4. O próprio acumulador de rastro, por cima de tudo.
+     *
+     * Deve ser chamado uma vez por quadro, depois de o JavaScript já
+     * ter chamado `engine.update(now_ms)`.
      * @param {Engine} engine
      * @param {number} now_ms
      * @param {number} live_width
      * @param {number} live_height
      * @param {Uint8Array | number[]} live_rgba
+     * @param {number} trail_capture_width
+     * @param {number} trail_capture_height
+     * @param {Uint8Array | number[]} trail_capture_rgba
      */
-    render(engine, now_ms, live_width, live_height, live_rgba) {
+    render(engine, now_ms, live_width, live_height, live_rgba, trail_capture_width, trail_capture_height, trail_capture_rgba) {
         _assertClass(engine, Engine);
-        const val2 = +now_ms;
-        const val3 = +live_width;
-        const val4 = +live_height;
-        const ptr0 = passArray8ToWasm0(live_rgba, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.renderer_render(this.__wbg_ptr, engine.__wbg_ptr, val2, val3, val4, ptr0, len0);
+        const val3 = +now_ms;
+        const val4 = +live_width;
+        const val5 = +live_height;
+        const val6 = +trail_capture_width;
+        const val7 = +trail_capture_height;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray8ToWasm0(live_rgba, wasm.__wbindgen_malloc);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArray8ToWasm0(trail_capture_rgba, wasm.__wbindgen_malloc);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_free(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_free(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        const ret = wasm.renderer_render(this.__wbg_ptr, engine.__wbg_ptr, val3, val4, val5, ptr0, len0, val6, val7, ptr1, len1);
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
         }
     }
     /**
      * Deve ser chamado sempre que o tamanho da tela mudar (incluindo
-     * quando o celular gira — RF: "mudança de orientação").
+     * quando o celular gira).
      * @param {number} width
      * @param {number} height
      */
@@ -275,8 +306,7 @@ export class Renderer {
         wasm.renderer_resize(this.__wbg_ptr, width, height);
     }
     /**
-     * Liga/desliga a mistura aditiva para os ecos (parte do RF08: o
-     * compositor deve permitir diferentes modos de mistura).
+     * Liga/desliga a mistura aditiva para os ecos.
      * @param {boolean} enabled
      */
     setAdditiveEchoes(enabled) {
@@ -1885,17 +1915,17 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1745, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1743, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_);
             return ret;
         },
         __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 82, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 80, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_);
             return ret;
         },
         __wbindgen_generic_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 82, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 80, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__25);
             return ret;
         },

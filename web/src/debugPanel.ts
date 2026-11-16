@@ -39,24 +39,32 @@ export class DebugPanel {
     this.container.innerHTML = "";
     this.container.appendChild(this.statsEl);
 
-    this.addSlider("Distorção: intensidade", 0, 1, 0.01, this.effects.underwaterIntensity, (v) => {
-      this.effects.underwaterIntensity = v;
+    this.addSlider("Deslocamento: intensidade", 0, 1, 0.01, this.effects.displacementIntensity, (v) => {
+      this.effects.displacementIntensity = v;
       this.emit();
     });
-    this.addSlider("Distorção: frequência", 0, 8, 0.1, this.effects.underwaterFrequency, (v) => {
-      this.effects.underwaterFrequency = v;
+    this.addSlider("Deslocamento: frequência", 0, 8, 0.1, this.effects.displacementFrequency, (v) => {
+      this.effects.displacementFrequency = v;
       this.emit();
     });
-    this.addSlider("Distorção: velocidade", 0, 3, 0.05, this.effects.underwaterSpeed, (v) => {
-      this.effects.underwaterSpeed = v;
+    this.addSlider("Deslocamento: velocidade", 0, 3, 0.05, this.effects.displacementSpeed, (v) => {
+      this.effects.displacementSpeed = v;
       this.emit();
     });
-    this.addSlider("Distorção: amplitude", 0, 0.08, 0.001, this.effects.underwaterAmplitude, (v) => {
-      this.effects.underwaterAmplitude = v;
+    this.addSlider("Deslocamento: amplitude", 0, 0.08, 0.001, this.effects.displacementAmplitude, (v) => {
+      this.effects.displacementAmplitude = v;
       this.emit();
     });
     this.addSlider("Dissolução: fragmentação", 0, 1, 0.01, this.effects.dissolveFragmentation, (v) => {
       this.effects.dissolveFragmentation = v;
+      this.emit();
+    });
+    this.addSlider("Rastro: decaimento/s", 0, 4, 0.05, this.effects.trailDecayPerSecond, (v) => {
+      this.effects.trailDecayPerSecond = v;
+      this.emit();
+    });
+    this.addSlider("Rastro: opacidade da captura", 0, 1, 0.01, this.effects.trailCaptureOpacity, (v) => {
+      this.effects.trailCaptureOpacity = v;
       this.emit();
     });
     this.addCheckbox("Mistura aditiva nos ecos", this.effects.additiveEchoes, (v) => {

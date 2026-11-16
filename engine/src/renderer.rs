@@ -2,12 +2,31 @@
 // usando a GPU, através da biblioteca `wgpu` (que fala WebGPU, e também
 // sabe usar WebGL2 como alternativa em navegadores mais antigos).
 //
-// Ele também faz o papel do "Compositor" descrito no enunciado: decide a
-// ordem de desenho (vestígios mais antigos primeiro, reflexo atual por
-// cima) e junta isso com os parâmetros dos efeitos visuais
-// (`effects.rs`). Separamos essa responsabilidade num struct próprio só
-// se, no futuro, a lógica de "o que desenhar" crescer e ficar complicada
-// o suficiente pra valer a pena separar de "como desenhar".
+// Ele também faz o papel do "Compositor" descrito no enunciado original:
+// decide a ordem de desenho e junta isso com os parâmetros dos efeitos
+// visuais (`effects.rs`).
+//
+// A peça central deste arquivo é o "acumulador de rastro": em vez de
+// guardar dezenas de fotos separadas do movimento recente e desenhar
+// cada uma por cima da outra (o que fica parecendo uma pilha de fotos
+// semitransparentes, e não um rastro orgânico), mantemos UMA textura na
+// GPU que vai sendo atualizada a cada quadro:
+//
+//   1. O conteúdo antigo dessa textura é "desbotado" (multiplicado por
+//      um fator de decaimento, calculado a partir do tempo real entre
+//      quadros — não depende do FPS).
+//   2. A silhueta da pessoa capturada agora é somada por cima.
+//
+// O resultado se parece com um rastro que persiste e desbota
+// continuamente, em vez de fotografias empilhadas. Como só existe UMA
+// textura (não uma por registro), isso também é bem mais barato para a
+// GPU do que desenhar dezenas de quads.
+//
+// Essa mesma textura é reaproveitada para o "campo de deslocamento
+// temporal" (a ideia de que o passado deforma sutilmente o presente):
+// o canal alfa dela diz "o quanto de presença recente existiu aqui", e
+// usamos esse valor para deformar levemente a amostragem do reflexo
+// atual nesses pontos.
 //
 // Um aviso sobre o estilo deste código: trabalhar com GPU em qualquer
 // linguagem é naturalmente um pouco verboso — é preciso descrever cada
@@ -32,6 +51,13 @@ const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     a: 1.0,
 };
 
+/// Os "modos de desenho" que o shader entende — precisa corresponder
+/// exatamente aos números comentados no topo de `shaders/composite.wgsl`.
+const DRAW_MODE_ECHO: f32 = 0.0;
+const DRAW_MODE_LIVE: f32 = 1.0;
+const DRAW_MODE_PLAIN: f32 = 2.0;
+const DRAW_MODE_TRAIL: f32 = 3.0;
+
 /// Os valores que mandamos para a GPU antes de cada "quad" (retângulo)
 /// ser desenhado. Isso precisa corresponder EXATAMENTE à struct
 /// `DrawUniforms` definida em `shaders/composite.wgsl` — mesma ordem de
@@ -44,17 +70,37 @@ struct DrawUniforms {
     opacity: f32,
     age_ratio: f32,
     time_seconds: f32,
-    /// 1.0 para o reflexo atual (sem distorção/dissolução), 0.0 para um eco.
-    is_live: f32,
-    underwater_intensity: f32,
-    underwater_frequency: f32,
-    underwater_speed: f32,
-    underwater_amplitude: f32,
+    draw_mode: f32,
+    displacement_intensity: f32,
+    displacement_frequency: f32,
+    displacement_speed: f32,
+    displacement_amplitude: f32,
     dissolve_fragmentation: f32,
     /// Sem uso — só está aqui para o tamanho da struct ficar "redondo"
     /// (múltiplo de 16 bytes), que é uma regra de alinhamento da GPU
     /// para esse tipo de dado (`var<uniform>`).
     padding: f32,
+}
+
+/// Monta os valores comuns a quase todo desenho, puxando os parâmetros
+/// de distorção/dissolução direto da configuração atual dos efeitos.
+/// Só o que muda de um desenho para o outro (modo, opacidade, idade,
+/// deslocamento) precisa ser passado explicitamente.
+fn make_uniforms(effects: &EffectConfig, draw_mode: f32, opacity: f32, age_ratio: f32, offset_x: f32, offset_y: f32, time_seconds: f32) -> DrawUniforms {
+    DrawUniforms {
+        offset_x,
+        offset_y,
+        opacity,
+        age_ratio,
+        time_seconds,
+        draw_mode,
+        displacement_intensity: effects.displacement_intensity,
+        displacement_frequency: effects.displacement_frequency,
+        displacement_speed: effects.displacement_speed,
+        displacement_amplitude: effects.displacement_amplitude,
+        dissolve_fragmentation: effects.dissolve_fragmentation,
+        padding: 0.0,
+    }
 }
 
 /// Uma textura simples (imagem na memória da GPU) que reutilizamos quadro
@@ -65,10 +111,16 @@ struct ReusableTexture {
     view: wgpu::TextureView,
     width: u32,
     height: u32,
+    /// Guardamos quais usos extras (alem dos básicos) essa textura
+    /// precisa, para recriá-la do jeito certo quando o tamanho mudar
+    /// (veja `ensure_size`). O acumulador de rastro, por exemplo,
+    /// precisa de `RENDER_ATTACHMENT` porque desenhamos NELE, não só
+    /// a partir dele.
+    extra_usage: wgpu::TextureUsages,
 }
 
 impl ReusableTexture {
-    fn new(device: &wgpu::Device, width: u32, height: u32, label: &str) -> Self {
+    fn new(device: &wgpu::Device, width: u32, height: u32, label: &str, extra_usage: wgpu::TextureUsages) -> Self {
         let width = width.max(1);
         let height = height.max(1);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -82,7 +134,7 @@ impl ReusableTexture {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | extra_usage,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -91,6 +143,7 @@ impl ReusableTexture {
             view,
             width,
             height,
+            extra_usage,
         }
     }
 
@@ -99,7 +152,7 @@ impl ReusableTexture {
     /// proporção da imagem capturada muda.
     fn ensure_size(&mut self, device: &wgpu::Device, width: u32, height: u32, label: &str) {
         if width != self.width || height != self.height {
-            *self = ReusableTexture::new(device, width, height, label);
+            *self = ReusableTexture::new(device, width, height, label, self.extra_usage);
         }
     }
 
@@ -143,12 +196,26 @@ pub struct Renderer {
     /// É o modo padrão, usado pelo reflexo atual e, geralmente, pelos ecos.
     pipeline_alpha: wgpu::RenderPipeline,
     /// Pipeline alternativa: mistura aditiva (as cores se somam, ficando
-    /// mais claras). Fica disponível para os ecos, caso configurado
-    /// (ver RF08), mas nunca é usada para o reflexo atual.
+    /// mais claras). Fica disponível para os ecos, caso configurado.
     pipeline_additive: wgpu::RenderPipeline,
 
     live_texture: ReusableTexture,
     echo_texture: ReusableTexture,
+    /// A captura mais recente (já com a máscara de segmentação aplicada)
+    /// a ser somada ao acumulador de rastro neste quadro.
+    trail_capture_texture: ReusableTexture,
+    /// O acumulador de rastro em si. Como não é possível ler e escrever
+    /// na mesma textura ao mesmo tempo, usamos duas ("ping-pong"):
+    /// `trail_front` é a versão já pronta deste quadro (lida pelo
+    /// reflexo atual e desenhada na tela); `trail_back` é onde
+    /// construímos a próxima versão. A cada quadro, elas trocam de
+    /// papel (veja `std::mem::swap` em `render`).
+    trail_front: ReusableTexture,
+    trail_back: ReusableTexture,
+    /// Quando este Renderer desenhou o último quadro. Usado para medir
+    /// quanto tempo realmente passou (em segundos) desde então, para
+    /// que o desbotamento do rastro dependa do tempo, não do FPS.
+    last_render_ms: Option<f64>,
 
     effects: EffectConfig,
     /// Se verdadeiro, os ecos usam a mistura aditiva em vez da normal.
@@ -163,8 +230,8 @@ impl Renderer {
     /// Promise: `const renderer = await Renderer.create(canvas, w, h)`.
     pub async fn create(canvas: web_sys::HtmlCanvasElement, width: u32, height: u32) -> Result<Renderer, JsValue> {
         // Pedimos ao navegador tanto WebGPU quanto WebGL2: o wgpu escolhe
-        // automaticamente o que estiver disponível (RF: "WebGPU como
-        // backend preferencial, WebGL2 quando compatível").
+        // automaticamente o que estiver disponível ("WebGPU como backend
+        // preferencial, WebGL2 quando compatível").
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
             ..Default::default()
@@ -264,6 +331,20 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // binding 3: o acumulador de rastro, usado pelo reflexo
+                // atual para saber onde deformar a imagem (o "campo de
+                // deslocamento temporal"). Nos outros modos de desenho,
+                // esse binding existe mas não é lido pelo shader.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -283,8 +364,12 @@ impl Renderer {
             ..Default::default()
         });
 
-        let live_texture = ReusableTexture::new(&device, width.max(1), height.max(1), "live_texture");
-        let echo_texture = ReusableTexture::new(&device, 1, 1, "echo_texture");
+        let no_extra_usage = wgpu::TextureUsages::empty();
+        let live_texture = ReusableTexture::new(&device, width.max(1), height.max(1), "live_texture", no_extra_usage);
+        let echo_texture = ReusableTexture::new(&device, 1, 1, "echo_texture", no_extra_usage);
+        let trail_capture_texture = ReusableTexture::new(&device, 1, 1, "trail_capture_texture", no_extra_usage);
+        let trail_front = ReusableTexture::new(&device, 1, 1, "trail_front", wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let trail_back = ReusableTexture::new(&device, 1, 1, "trail_back", wgpu::TextureUsages::RENDER_ATTACHMENT);
 
         Ok(Renderer {
             surface,
@@ -300,13 +385,17 @@ impl Renderer {
             pipeline_additive,
             live_texture,
             echo_texture,
+            trail_capture_texture,
+            trail_front,
+            trail_back,
+            last_render_ms: None,
             effects: EffectConfig::default_config(),
             additive_echoes: false,
         })
     }
 
     /// Deve ser chamado sempre que o tamanho da tela mudar (incluindo
-    /// quando o celular gira — RF: "mudança de orientação").
+    /// quando o celular gira).
     pub fn resize(&mut self, width: u32, height: u32) {
         self.surface_width = width.max(1);
         self.surface_height = height.max(1);
@@ -323,38 +412,48 @@ impl Renderer {
         self.surface.configure(&self.device, &config);
     }
 
-    /// Ajusta os parâmetros artísticos dos efeitos (RF06/RF07). Pensado
-    /// para ser chamado pelo painel de desenvolvimento (Etapa 5).
+    /// Ajusta os parâmetros artísticos dos efeitos: o campo de
+    /// deslocamento temporal, a dissolução dos ecos, e o ritmo com que
+    /// o acumulador de rastro desbota.
     #[wasm_bindgen(js_name = configureEffects)]
     pub fn configure_effects(
         &mut self,
-        underwater_intensity: f32,
-        underwater_frequency: f32,
-        underwater_speed: f32,
-        underwater_amplitude: f32,
+        displacement_intensity: f32,
+        displacement_frequency: f32,
+        displacement_speed: f32,
+        displacement_amplitude: f32,
         dissolve_fragmentation: f32,
+        trail_decay_per_second: f32,
+        trail_capture_opacity: f32,
     ) {
         self.effects = EffectConfig {
-            underwater_intensity,
-            underwater_frequency,
-            underwater_speed,
-            underwater_amplitude,
+            displacement_intensity,
+            displacement_frequency,
+            displacement_speed,
+            displacement_amplitude,
             dissolve_fragmentation,
+            trail_decay_per_second,
+            trail_capture_opacity,
         };
     }
 
-    /// Liga/desliga a mistura aditiva para os ecos (parte do RF08: o
-    /// compositor deve permitir diferentes modos de mistura).
+    /// Liga/desliga a mistura aditiva para os ecos.
     #[wasm_bindgen(js_name = setAdditiveEchoes)]
     pub fn set_additive_echoes(&mut self, enabled: bool) {
         self.additive_echoes = enabled;
     }
 
-    /// Desenha um quadro completo: primeiro o reflexo atual (que serve de
-    /// base, preenchendo a tela inteira), depois os ecos (do mais antigo
-    /// para o mais novo, já nessa ordem dentro de `engine`) por cima, com
-    /// transparência. Deve ser chamado uma vez por frame, depois de o
-    /// JavaScript já ter chamado `engine.update(now_ms)`.
+    /// Desenha um quadro completo. Ordem (de baixo para cima):
+    ///
+    /// 1. Atualiza o acumulador de rastro (desbota o antigo, soma a
+    ///    captura nova).
+    /// 2. Reflexo atual — a base, deformada localmente pelo campo de
+    ///    deslocamento temporal onde o acumulador indica presença recente.
+    /// 3. Ecos da memória prolongada, depois intermediária.
+    /// 4. O próprio acumulador de rastro, por cima de tudo.
+    ///
+    /// Deve ser chamado uma vez por quadro, depois de o JavaScript já
+    /// ter chamado `engine.update(now_ms)`.
     pub fn render(
         &mut self,
         engine: &Engine,
@@ -362,6 +461,9 @@ impl Renderer {
         live_width: u32,
         live_height: u32,
         live_rgba: &[u8],
+        trail_capture_width: u32,
+        trail_capture_height: u32,
+        trail_capture_rgba: &[u8],
     ) -> Result<(), JsValue> {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
@@ -378,30 +480,27 @@ impl Renderer {
 
         let time_seconds = (now_ms / 1000.0) as f32;
 
+        // Quanto tempo (em segundos) passou desde o último quadro
+        // desenhado. Na primeira vez, `is_first_render` fica marcado, e
+        // pulamos a parte de "desbotar o acumulador antigo" (ele ainda
+        // não tem conteúdo válido).
+        let is_first_render = self.last_render_ms.is_none();
+        let dt_seconds = match self.last_render_ms {
+            Some(last) => ((now_ms - last) / 1000.0).max(0.0) as f32,
+            None => 0.0,
+        };
+        self.last_render_ms = Some(now_ms);
+
+        self.update_trail_accumulator(trail_capture_width, trail_capture_height, trail_capture_rgba, dt_seconds, is_first_render);
+
         // O reflexo atual é a BASE: desenhamos ele primeiro (limpando a
         // tela), e os ecos (vestígios do passado) são desenhados DEPOIS,
-        // por cima, com transparência. Se fosse na ordem contrária, o
-        // reflexo atual (totalmente opaco) cobriria a tela inteira por
-        // cima dos ecos, e nenhum vestígio apareceria nunca.
-        self.live_texture
-            .ensure_size(&self.device, live_width, live_height, "live_texture");
+        // por cima, com transparência.
+        self.live_texture.ensure_size(&self.device, live_width, live_height, "live_texture");
         self.live_texture.write_pixels(&self.queue, live_rgba);
 
-        let live_uniforms = DrawUniforms {
-            offset_x: 0.0,
-            offset_y: 0.0,
-            opacity: 1.0,
-            age_ratio: 0.0,
-            time_seconds,
-            is_live: 1.0,
-            underwater_intensity: 0.0,
-            underwater_frequency: 0.0,
-            underwater_speed: 0.0,
-            underwater_amplitude: 0.0,
-            dissolve_fragmentation: 0.0,
-            padding: 0.0,
-        };
-        self.draw_quad(&target_view, &self.live_texture.view, live_uniforms, false, true);
+        let live_uniforms = make_uniforms(&self.effects, DRAW_MODE_LIVE, 1.0, 0.0, 0.0, 0.0, time_seconds);
+        self.draw_quad(&target_view, &self.live_texture.view, &self.trail_front.view, live_uniforms, false, true);
 
         let active_count = engine.active_count();
         for index in 0..active_count {
@@ -410,27 +509,26 @@ impl Renderer {
                 None => continue,
             };
 
-            self.echo_texture
-                .ensure_size(&self.device, record.width, record.height, "echo_texture");
+            self.echo_texture.ensure_size(&self.device, record.width, record.height, "echo_texture");
             self.echo_texture.write_pixels(&self.queue, &record.pixels);
 
-            let uniforms = DrawUniforms {
-                offset_x: record.offset_x,
-                offset_y: record.offset_y,
-                opacity: record.opacity,
-                age_ratio: record.age_ratio,
+            let uniforms = make_uniforms(
+                &self.effects,
+                DRAW_MODE_ECHO,
+                record.opacity,
+                record.age_ratio,
+                record.offset_x,
+                record.offset_y,
                 time_seconds,
-                is_live: 0.0,
-                underwater_intensity: self.effects.underwater_intensity,
-                underwater_frequency: self.effects.underwater_frequency,
-                underwater_speed: self.effects.underwater_speed,
-                underwater_amplitude: self.effects.underwater_amplitude,
-                dissolve_fragmentation: self.effects.dissolve_fragmentation,
-                padding: 0.0,
-            };
+            );
 
-            self.draw_quad(&target_view, &self.echo_texture.view, uniforms, self.additive_echoes, false);
+            self.draw_quad(&target_view, &self.echo_texture.view, &self.trail_front.view, uniforms, self.additive_echoes, false);
         }
+
+        // O rastro de movimento recente vai por cima de tudo — é a
+        // presença "mais viva" entre as memórias.
+        let trail_uniforms = make_uniforms(&self.effects, DRAW_MODE_TRAIL, 1.0, 0.0, 0.0, 0.0, time_seconds);
+        self.draw_quad(&target_view, &self.trail_front.view, &self.trail_front.view, trail_uniforms, false, false);
 
         frame.present();
         Ok(())
@@ -438,16 +536,56 @@ impl Renderer {
 }
 
 impl Renderer {
-    /// Desenha um único "quad" (retângulo cobrindo a tela) com a textura
+    /// Atualiza o acumulador de rastro (ping-pong entre `trail_front` e
+    /// `trail_back`): desbota o conteúdo antigo e soma a captura nova.
+    /// Ao final, `trail_front` é a versão pronta para este quadro.
+    fn update_trail_accumulator(&mut self, capture_width: u32, capture_height: u32, capture_rgba: &[u8], dt_seconds: f32, is_first_render: bool) {
+        self.trail_back.ensure_size(&self.device, capture_width, capture_height, "trail_back");
+        self.trail_capture_texture
+            .ensure_size(&self.device, capture_width, capture_height, "trail_capture_texture");
+        self.trail_capture_texture.write_pixels(&self.queue, capture_rgba);
+
+        // `decay_factor` é o quanto do rastro antigo sobrevive neste
+        // quadro. Usamos uma curva exponencial (`exp(-taxa * dt)`): ela
+        // dá sempre o mesmo resultado visual independentemente do FPS,
+        // porque depende do tempo real passado (`dt_seconds`), não da
+        // quantidade de quadros.
+        let decay_factor = (-self.effects.trail_decay_per_second * dt_seconds).exp();
+
+        if !is_first_render {
+            // Passo 1: copia o rastro antigo para o novo buffer, já
+            // desbotado pelo fator de decaimento.
+            let decay_uniforms = make_uniforms(&self.effects, DRAW_MODE_PLAIN, decay_factor, 0.0, 0.0, 0.0, 0.0);
+            self.draw_quad(&self.trail_back.view, &self.trail_front.view, &self.trail_front.view, decay_uniforms, false, true);
+        }
+
+        // Passo 2: soma a captura nova por cima (sem limpar — por isso
+        // `clear_before_drawing` é `true` só quando pulamos o passo 1).
+        let capture_uniforms = make_uniforms(&self.effects, DRAW_MODE_PLAIN, self.effects.trail_capture_opacity, 0.0, 0.0, 0.0, 0.0);
+        self.draw_quad(
+            &self.trail_back.view,
+            &self.trail_capture_texture.view,
+            &self.trail_front.view,
+            capture_uniforms,
+            false,
+            is_first_render,
+        );
+
+        std::mem::swap(&mut self.trail_front, &mut self.trail_back);
+    }
+
+    /// Desenha um único "quad" (retângulo cobrindo o alvo) com a textura
     /// e os parâmetros dados. Cada chamada cria seu próprio buffer de
     /// uniforms e seu próprio bind group — não é o jeito mais rápido
     /// possível de usar a GPU, mas é simples de entender e, para a
-    /// quantidade de ecos que guardamos (no máximo algumas centenas), é
+    /// quantidade de desenhos que fazemos por quadro (a tela final mais
+    /// os ecos ativos, mais duas passagens do acumulador de rastro), é
     /// rápido o suficiente.
     fn draw_quad(
         &self,
         target_view: &wgpu::TextureView,
         texture_view: &wgpu::TextureView,
+        displacement_view: &wgpu::TextureView,
         uniforms: DrawUniforms,
         additive: bool,
         clear_before_drawing: bool,
@@ -477,6 +615,10 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(displacement_view),
                 },
             ],
         });
@@ -560,14 +702,14 @@ fn create_pipeline(
     })
 }
 
-/// Junta os quatro arquivos .wgsl num texto só, porque o WGSL não tem um
-/// jeito de "importar" um arquivo de dentro do outro. A ordem importa:
-/// `composite.wgsl` usa funções definidas nos outros três, então eles
+/// Junta os arquivos .wgsl num texto só, porque o WGSL não tem um jeito
+/// de "importar" um arquivo de dentro do outro. A ordem importa:
+/// `composite.wgsl` usa funções definidas nos outros, então eles
 /// precisam vir antes.
 fn build_shader_source() -> String {
     let echo = include_str!("shaders/echo.wgsl");
-    let underwater = include_str!("shaders/underwater.wgsl");
+    let displacement = include_str!("shaders/displacement.wgsl");
     let dissolve = include_str!("shaders/dissolve.wgsl");
     let composite = include_str!("shaders/composite.wgsl");
-    format!("{echo}\n{underwater}\n{dissolve}\n{composite}")
+    format!("{echo}\n{displacement}\n{dissolve}\n{composite}")
 }

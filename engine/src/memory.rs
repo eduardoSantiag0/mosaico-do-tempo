@@ -1,20 +1,23 @@
-// Este arquivo implementa a "memória temporal" do Mosaico do Tempo.
+// Este arquivo implementa a "memória temporal" do Mosaico do Tempo:
+// as camadas INTERMEDIÁRIA e PROLONGADA (os "ecos" e "vestígios"
+// discretos). A memória CURTA (o rastro de movimento mais recente) não
+// vive aqui — ela é um acumulador contínuo na GPU, feito em
+// `renderer.rs`, porque um rastro de movimento fica mais orgânico sendo
+// "desenhado e desbotando" continuamente do que sendo um monte de fotos
+// separadas se sobrepondo (veja o comentário no topo de `renderer.rs`).
 //
-// A ideia é simples: cada vez que a câmera captura uma imagem reduzida da
-// pessoa, guardamos essa imagem com um "timestamp" (o momento em que ela foi
-// capturada, em milissegundos). Com o tempo, decidimos se cada imagem ainda
-// deve aparecer na tela (ela "existe" por um tempo e depois expira) e o
-// quão visível ela deve estar (ela vai ficando mais transparente/fraca).
+// A ideia aqui é simples: cada vez que a câmera captura uma imagem
+// reduzida da pessoa (já só com a silhueta, graças à segmentação),
+// guardamos essa imagem com um "timestamp" (o momento em que foi
+// capturada, em milissegundos). Com o tempo, decidimos se cada imagem
+// ainda deve aparecer na tela (ela "existe" por um tempo e depois
+// expira) e o quão visível ela deve estar (vai ficando mais
+// transparente/fraca, e também pode "pulsar" — ver `reappearance_*`
+// abaixo).
 //
-// Para não gastar memória demais, guardamos no máximo N imagens por camada
-// (um "buffer circular": quando enche, a mais antiga é descartada para
-// abrir espaço para a mais nova).
-//
-// Existem três camadas, cada uma com sua própria duração e seu próprio
-// ritmo de captura:
-// - Curta: rastros recentes, capturados com bastante frequência.
-// - Intermediária: silhuetas capturadas com menos frequência, duram mais.
-// - Prolongada: vestígios raros e fracos, que duram até 2 minutos.
+// Para não gastar memória demais, guardamos no máximo N imagens por
+// camada (um "buffer circular": quando enche, a mais antiga é
+// descartada para abrir espaço para a mais nova).
 
 #[derive(Clone)]
 pub struct MemoryRecord {
@@ -54,39 +57,44 @@ pub struct LayerConfig {
     /// O quanto a imagem pode "derivar" (se deslocar) lateralmente conforme
     /// envelhece. 0.0 significa "não se move".
     pub drift_amount: f32,
+    /// Em vez de desbotar de um jeito sempre suave e previsível, a
+    /// camada PROLONGADA deve dar a impressão de "reaparecimentos
+    /// ocasionais e discretos" (ver seção 4.3 do briefing artístico).
+    /// Fazemos isso multiplicando a opacidade por uma onda que sobe e
+    /// desce ao longo da vida do registro. `reappearance_strength` (0.0
+    /// a 1.0) controla o quanto essa onda chega a escurecer o registro
+    /// nos "vales"; 0.0 desliga completamente o efeito (fade liso, como
+    /// antes). `reappearance_frequency` controla quantas vezes essa onda
+    /// sobe e desce durante a vida do registro.
+    pub reappearance_strength: f32,
+    pub reappearance_frequency: f32,
 }
 
 impl LayerConfig {
-    pub fn short_default() -> Self {
-        LayerConfig {
-            capacity: 48,
-            capture_interval_ms: 80.0,
-            max_age_ms: 5_000.0,
-            base_weight: 0.9,
-            fade_power: 1.0,
-            drift_amount: 0.0,
-        }
-    }
-
     pub fn intermediate_default() -> Self {
         LayerConfig {
-            capacity: 50,
-            capture_interval_ms: 600.0,
-            max_age_ms: 30_000.0,
-            base_weight: 0.55,
+            capacity: 40,
+            capture_interval_ms: 650.0,
+            max_age_ms: 26_000.0,
+            base_weight: 0.42,
             fade_power: 1.4,
-            drift_amount: 0.03,
+            drift_amount: 0.025,
+            reappearance_strength: 0.0,
+            reappearance_frequency: 0.0,
         }
     }
 
     pub fn long_default() -> Self {
         LayerConfig {
-            capacity: 30,
-            capture_interval_ms: 4_000.0,
-            max_age_ms: 120_000.0,
-            base_weight: 0.3,
-            fade_power: 2.4,
-            drift_amount: 0.06,
+            capacity: 22,
+            capture_interval_ms: 4_500.0,
+            max_age_ms: 110_000.0,
+            base_weight: 0.2,
+            fade_power: 2.0,
+            drift_amount: 0.05,
+            // Em média, um "pico" de reaparecimento a cada ~16s de vida.
+            reappearance_strength: 0.65,
+            reappearance_frequency: std::f32::consts::TAU / 16_000.0,
         }
     }
 }
@@ -130,7 +138,17 @@ fn compute_fade(record: &MemoryRecord, config: &LayerConfig, age_ms: f64) -> Rec
         intensity = 1.0;
     }
 
-    let opacity = fade_curve * config.base_weight * intensity;
+    let mut opacity = fade_curve * config.base_weight * intensity;
+
+    // "Reaparecimentos": multiplica a opacidade por uma onda que sobe e
+    // desce. Elevamos a onda ao cubo para que os picos sejam mais curtos
+    // e discretos (em vez de uma oscilação lenta e suave o tempo todo).
+    if config.reappearance_strength > 0.0 {
+        let wave = 0.5 + 0.5 * (age_ms as f32 * config.reappearance_frequency).sin();
+        let pulse = wave * wave * wave;
+        let pulse_factor = (1.0 - config.reappearance_strength) + config.reappearance_strength * pulse;
+        opacity *= pulse_factor;
+    }
 
     // O deslocamento usa seno/cosseno só para dar uma variação suave e
     // "orgânica" — não é um movimento aleatório de verdade, é sempre o
@@ -259,10 +277,11 @@ impl MemoryLayer {
     }
 }
 
-/// Identifica cada uma das três camadas de memória.
+/// Identifica cada uma das duas camadas de memória discretas. O rastro
+/// de movimento recente (a antiga camada "curta") agora é o acumulador
+/// contínuo de `renderer.rs`, então não aparece aqui.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerKind {
-    Short,
     Intermediate,
     Long,
 }
@@ -286,9 +305,8 @@ pub struct RenderRecord {
     pub pixels: Vec<u8>,
 }
 
-/// Junta as três camadas (curta, intermediária, prolongada) num só lugar.
+/// Junta as duas camadas discretas (intermediária, prolongada) num só lugar.
 pub struct TemporalMemory {
-    pub short: MemoryLayer,
     pub intermediate: MemoryLayer,
     pub long: MemoryLayer,
 }
@@ -296,7 +314,6 @@ pub struct TemporalMemory {
 impl TemporalMemory {
     pub fn new() -> Self {
         TemporalMemory {
-            short: MemoryLayer::new(LayerConfig::short_default()),
             intermediate: MemoryLayer::new(LayerConfig::intermediate_default()),
             long: MemoryLayer::new(LayerConfig::long_default()),
         }
@@ -304,52 +321,39 @@ impl TemporalMemory {
 
     pub fn layer_mut(&mut self, kind: LayerKind) -> &mut MemoryLayer {
         match kind {
-            LayerKind::Short => &mut self.short,
             LayerKind::Intermediate => &mut self.intermediate,
             LayerKind::Long => &mut self.long,
         }
     }
 
-    /// Entrega a mesma captura para as três camadas. Cada uma decide por
+    /// Entrega a mesma captura para as duas camadas. Cada uma decide por
     /// conta própria (usando `maybe_insert`) se vai realmente guardar ou
     /// não, de acordo com seu próprio ritmo de captura.
     pub fn insert(&mut self, record: MemoryRecord) {
-        self.short.maybe_insert(record.clone());
         self.intermediate.maybe_insert(record.clone());
         self.long.maybe_insert(record);
     }
 
     pub fn expire_all(&mut self, now_ms: f64) {
-        self.short.expire(now_ms);
         self.intermediate.expire(now_ms);
         self.long.expire(now_ms);
     }
 
     pub fn total_bytes(&self) -> usize {
-        self.short.total_bytes() + self.intermediate.total_bytes() + self.long.total_bytes()
+        self.intermediate.total_bytes() + self.long.total_bytes()
     }
 
     pub fn clear(&mut self) {
-        self.short.clear();
         self.intermediate.clear();
         self.long.clear();
     }
 
-    /// Junta os registros visíveis das três camadas numa única lista,
-    /// ordenada do mais antigo para o mais novo (assim, quando formos
-    /// desenhar na tela, o reflexo atual fica sempre por cima dos
-    /// vestígios do passado).
+    /// Junta os registros visíveis das duas camadas numa única lista,
+    /// ordenada do mais antigo para o mais novo.
     pub fn collect_active(&self, now_ms: f64) -> Vec<RenderRecord> {
         let mut all = Vec::new();
 
-        // A ordem aqui (long, intermediate, short) não importa de verdade,
-        // porque vamos ordenar tudo por idade no final. Só juntamos tudo
-        // numa lista só primeiro.
-        let layers = [
-            (LayerKind::Long, &self.long),
-            (LayerKind::Intermediate, &self.intermediate),
-            (LayerKind::Short, &self.short),
-        ];
+        let layers = [(LayerKind::Long, &self.long), (LayerKind::Intermediate, &self.intermediate)];
 
         for (kind, layer) in layers {
             let max_age_ms = layer.config.max_age_ms;
@@ -405,16 +409,22 @@ mod tests {
         }
     }
 
+    fn plain_config(capacity: usize, capture_interval_ms: f64, max_age_ms: f64, base_weight: f32, fade_power: f32) -> LayerConfig {
+        LayerConfig {
+            capacity,
+            capture_interval_ms,
+            max_age_ms,
+            base_weight,
+            fade_power,
+            drift_amount: 0.0,
+            reappearance_strength: 0.0,
+            reappearance_frequency: 0.0,
+        }
+    }
+
     #[test]
     fn insert_respects_capture_interval() {
-        let mut layer = MemoryLayer::new(LayerConfig {
-            capacity: 10,
-            capture_interval_ms: 100.0,
-            max_age_ms: 5_000.0,
-            base_weight: 1.0,
-            fade_power: 1.0,
-            drift_amount: 0.0,
-        });
+        let mut layer = MemoryLayer::new(plain_config(10, 100.0, 5_000.0, 1.0, 1.0));
 
         assert!(layer.maybe_insert(record(0.0)));
         assert!(!layer.maybe_insert(record(50.0)), "ainda não passou tempo suficiente");
@@ -424,14 +434,7 @@ mod tests {
 
     #[test]
     fn expiration_drops_old_records_by_timestamp() {
-        let mut layer = MemoryLayer::new(LayerConfig {
-            capacity: 10,
-            capture_interval_ms: 0.0,
-            max_age_ms: 1_000.0,
-            base_weight: 1.0,
-            fade_power: 1.0,
-            drift_amount: 0.0,
-        });
+        let mut layer = MemoryLayer::new(plain_config(10, 0.0, 1_000.0, 1.0, 1.0));
 
         layer.maybe_insert(record(0.0));
         layer.maybe_insert(record(500.0));
@@ -449,14 +452,7 @@ mod tests {
 
     #[test]
     fn capacity_limit_evicts_oldest_first() {
-        let mut layer = MemoryLayer::new(LayerConfig {
-            capacity: 3,
-            capture_interval_ms: 0.0,
-            max_age_ms: 100_000.0,
-            base_weight: 1.0,
-            fade_power: 1.0,
-            drift_amount: 0.0,
-        });
+        let mut layer = MemoryLayer::new(plain_config(3, 0.0, 100_000.0, 1.0, 1.0));
 
         for i in 0..5 {
             layer.maybe_insert(record(i as f64 * 10.0));
@@ -477,14 +473,7 @@ mod tests {
         // numa câmera de verdade, com FPS variável), a visibilidade de
         // cada registro depende só de "quanto tempo passou", não de
         // "quantos frames passaram".
-        let mut layer = MemoryLayer::new(LayerConfig {
-            capacity: 100,
-            capture_interval_ms: 0.0,
-            max_age_ms: 1_000.0,
-            base_weight: 1.0,
-            fade_power: 1.0,
-            drift_amount: 0.0,
-        });
+        let mut layer = MemoryLayer::new(plain_config(100, 0.0, 1_000.0, 1.0, 1.0));
 
         let irregular_frame_times = [0.0, 16.0, 48.0, 49.0, 300.0, 301.0, 980.0, 1_500.0];
         for t in irregular_frame_times {
@@ -509,14 +498,7 @@ mod tests {
 
     #[test]
     fn fade_reaches_zero_opacity_at_max_age() {
-        let mut layer = MemoryLayer::new(LayerConfig {
-            capacity: 10,
-            capture_interval_ms: 0.0,
-            max_age_ms: 1_000.0,
-            base_weight: 0.8,
-            fade_power: 1.0,
-            drift_amount: 0.0,
-        });
+        let mut layer = MemoryLayer::new(plain_config(10, 0.0, 1_000.0, 0.8, 1.0));
         layer.maybe_insert(record(0.0));
 
         let active_now = layer.active(0.0);
@@ -531,14 +513,7 @@ mod tests {
 
     #[test]
     fn total_bytes_tracks_capacity_bound() {
-        let mut layer = MemoryLayer::new(LayerConfig {
-            capacity: 2,
-            capture_interval_ms: 0.0,
-            max_age_ms: 100_000.0,
-            base_weight: 1.0,
-            fade_power: 1.0,
-            drift_amount: 0.0,
-        });
+        let mut layer = MemoryLayer::new(plain_config(2, 0.0, 100_000.0, 1.0, 1.0));
         let bytes_per_record = record(0.0).pixels.len();
 
         for i in 0..10 {
@@ -555,7 +530,6 @@ mod tests {
     #[test]
     fn session_reset_clears_every_layer() {
         let mut memory = TemporalMemory::new();
-        memory.short.config.capture_interval_ms = 0.0;
         memory.intermediate.config.capture_interval_ms = 0.0;
         memory.long.config.capture_interval_ms = 0.0;
 
@@ -569,12 +543,12 @@ mod tests {
     #[test]
     fn collect_active_orders_oldest_first() {
         let mut memory = TemporalMemory::new();
-        memory.short.config.capture_interval_ms = 0.0;
-        memory.short.config.max_age_ms = 10_000.0;
+        memory.intermediate.config.capture_interval_ms = 0.0;
+        memory.intermediate.config.max_age_ms = 10_000.0;
 
-        memory.short.maybe_insert(record(0.0));
-        memory.short.maybe_insert(record(1_000.0));
-        memory.short.maybe_insert(record(2_000.0));
+        memory.intermediate.maybe_insert(record(0.0));
+        memory.intermediate.maybe_insert(record(1_000.0));
+        memory.intermediate.maybe_insert(record(2_000.0));
 
         let active = memory.collect_active(2_000.0);
 
@@ -588,5 +562,54 @@ mod tests {
         for i in 0..ages.len() - 1 {
             assert!(ages[i] >= ages[i + 1], "esperava idades em ordem decrescente: {:?}", ages);
         }
+    }
+
+    #[test]
+    fn reappearance_pulse_creates_brighter_and_dimmer_moments() {
+        // Com reappearance_strength > 0, a opacidade não deve cair de
+        // forma puramente monotônica — deve haver momentos em que ela
+        // sobe de novo (um "pico"), em vez de só diminuir sem parar.
+        let config = LayerConfig {
+            capacity: 10,
+            capture_interval_ms: 0.0,
+            max_age_ms: 100_000.0,
+            base_weight: 1.0,
+            fade_power: 1.0,
+            drift_amount: 0.0,
+            reappearance_strength: 0.8,
+            reappearance_frequency: std::f32::consts::TAU / 10_000.0, // um ciclo a cada 10s
+        };
+        let mut layer = MemoryLayer::new(config);
+        layer.maybe_insert(record(0.0));
+
+        // Amostra a opacidade em vários instantes dentro de um único
+        // ciclo da onda de reaparecimento.
+        let mut opacities = Vec::new();
+        for step in 0..20 {
+            let now_ms = step as f64 * 500.0; // 0, 500, 1000, ..., 9500
+            let active = layer.active(now_ms);
+            opacities.push(active[0].1.opacity);
+        }
+
+        let max_opacity = opacities.iter().cloned().fold(f32::MIN, f32::max);
+        let min_opacity = opacities.iter().cloned().fold(f32::MAX, f32::min);
+
+        assert!(
+            max_opacity - min_opacity > 0.3,
+            "esperava uma variação grande entre pico e vale da onda de reaparecimento, mas foi {}",
+            max_opacity - min_opacity
+        );
+
+        // Em algum ponto depois do primeiro instante, a opacidade deve
+        // voltar a SUBIR em relação ao quadro anterior (prova de que não
+        // é um fade puramente decrescente).
+        let mut saw_an_increase = false;
+        for i in 1..opacities.len() {
+            if opacities[i] > opacities[i - 1] + 1e-4 {
+                saw_an_increase = true;
+                break;
+            }
+        }
+        assert!(saw_an_increase, "esperava que a opacidade subisse em algum momento (um 'pico'), não só caísse");
     }
 }

@@ -37,10 +37,13 @@ export class Engine {
     activePixels(index: number): Uint8Array;
     activeWidth(index: number): number;
     /**
-     * Muda a configuração de uma das três camadas ("short", "intermediate"
-     * ou "long"). As durações são em milissegundos.
+     * Muda a configuração de uma das duas camadas discretas
+     * ("intermediate" ou "long"). As durações são em milissegundos.
+     * `reappearance_strength`/`reappearance_frequency` controlam o
+     * efeito de "reaparecimentos ocasionais" (ver `memory.rs`); passe
+     * `0.0` para `reappearance_strength` para um fade liso, sem pulsar.
      */
-    configureLayer(layer: string, capacity: number, capture_interval_ms: number, max_age_ms: number, base_weight: number, fade_power: number, drift_amount: number): void;
+    configureLayer(layer: string, capacity: number, capture_interval_ms: number, max_age_ms: number, base_weight: number, fade_power: number, drift_amount: number, reappearance_strength: number, reappearance_frequency: number): void;
     /**
      * Recebe uma captura de imagem (já em resolução reduzida, no formato
      * RGBA) e entrega para a memória guardar. Cada camada decide, por
@@ -54,8 +57,9 @@ export class Engine {
      */
     reset(): void;
     /**
-     * Quantos bytes de memória estão sendo usados, no total, pelas três
-     * camadas. Útil para diagnóstico/depuração.
+     * Quantos bytes de memória estão sendo usados, no total, pelas duas
+     * camadas discretas (o acumulador de rastro recente, na GPU, não
+     * entra nessa conta). Útil para diagnóstico/depuração.
      */
     totalBytes(): number;
     /**
@@ -75,10 +79,11 @@ export class Renderer {
     free(): void;
     [Symbol.dispose](): void;
     /**
-     * Ajusta os parâmetros artísticos dos efeitos (RF06/RF07). Pensado
-     * para ser chamado pelo painel de desenvolvimento (Etapa 5).
+     * Ajusta os parâmetros artísticos dos efeitos: o campo de
+     * deslocamento temporal, a dissolução dos ecos, e o ritmo com que
+     * o acumulador de rastro desbota.
      */
-    configureEffects(underwater_intensity: number, underwater_frequency: number, underwater_speed: number, underwater_amplitude: number, dissolve_fragmentation: number): void;
+    configureEffects(displacement_intensity: number, displacement_frequency: number, displacement_speed: number, displacement_amplitude: number, dissolve_fragmentation: number, trail_decay_per_second: number, trail_capture_opacity: number): void;
     /**
      * Cria o Renderer. É uma função assíncrona porque pedir acesso à
      * GPU (adaptador e dispositivo) é uma operação assíncrona no
@@ -87,21 +92,26 @@ export class Renderer {
      */
     static create(canvas: HTMLCanvasElement, width: number, height: number): Promise<Renderer>;
     /**
-     * Desenha um quadro completo: primeiro o reflexo atual (que serve de
-     * base, preenchendo a tela inteira), depois os ecos (do mais antigo
-     * para o mais novo, já nessa ordem dentro de `engine`) por cima, com
-     * transparência. Deve ser chamado uma vez por frame, depois de o
-     * JavaScript já ter chamado `engine.update(now_ms)`.
+     * Desenha um quadro completo. Ordem (de baixo para cima):
+     *
+     * 1. Atualiza o acumulador de rastro (desbota o antigo, soma a
+     *    captura nova).
+     * 2. Reflexo atual — a base, deformada localmente pelo campo de
+     *    deslocamento temporal onde o acumulador indica presença recente.
+     * 3. Ecos da memória prolongada, depois intermediária.
+     * 4. O próprio acumulador de rastro, por cima de tudo.
+     *
+     * Deve ser chamado uma vez por quadro, depois de o JavaScript já
+     * ter chamado `engine.update(now_ms)`.
      */
-    render(engine: Engine, now_ms: number, live_width: number, live_height: number, live_rgba: Uint8Array | number[]): void;
+    render(engine: Engine, now_ms: number, live_width: number, live_height: number, live_rgba: Uint8Array | number[], trail_capture_width: number, trail_capture_height: number, trail_capture_rgba: Uint8Array | number[]): void;
     /**
      * Deve ser chamado sempre que o tamanho da tela mudar (incluindo
-     * quando o celular gira — RF: "mudança de orientação").
+     * quando o celular gira).
      */
     resize(width: number, height: number): void;
     /**
-     * Liga/desliga a mistura aditiva para os ecos (parte do RF08: o
-     * compositor deve permitir diferentes modos de mistura).
+     * Liga/desliga a mistura aditiva para os ecos.
      */
     setAdditiveEchoes(enabled: boolean): void;
 }
@@ -128,16 +138,16 @@ export interface InitOutput {
     readonly engine_activeOpacity: (a: number, b: number) => number;
     readonly engine_activePixels: (a: number, b: number) => [number, number];
     readonly engine_activeWidth: (a: number, b: number) => number;
-    readonly engine_configureLayer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
+    readonly engine_configureLayer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number];
     readonly engine_insertFrame: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly engine_new: () => number;
     readonly engine_reset: (a: number) => void;
     readonly engine_totalBytes: (a: number) => number;
     readonly engine_update: (a: number, b: number) => number;
     readonly engine_version: () => [number, number];
-    readonly renderer_configureEffects: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly renderer_configureEffects: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly renderer_create: (a: any, b: number, c: number) => any;
-    readonly renderer_render: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
+    readonly renderer_render: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number];
     readonly renderer_resize: (a: number, b: number, c: number) => void;
     readonly renderer_setAdditiveEchoes: (a: number, b: number) => void;
     readonly wgpu_render_bundle_draw: (a: number, b: number, c: number, d: number, e: number) => void;

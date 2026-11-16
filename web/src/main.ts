@@ -33,14 +33,17 @@ let ctx2d: CanvasRenderingContext2D | null = null;
 let consecutiveGpuFailures = 0;
 const MAX_CONSECUTIVE_GPU_FAILURES = 5;
 
-// Estes três offscreen canvases guardam, respectivamente: o quadro
-// reduzido usado para a memória temporal, o quadro (um pouco maior) usado
-// para o reflexo atual, e o quadro usado como entrada da segmentação.
-// Seus tamanhos são recalculados por `resizeCanvas()` a partir de
-// `config.capture`, ajustado pelo nível de qualidade atual (ver
-// performance.ts).
+// Estes offscreen canvases guardam, respectivamente: o quadro reduzido
+// usado pela memória intermediária/prolongada, o quadro usado para
+// alimentar o acumulador de rastro (memória curta, na GPU), o quadro
+// (maior) usado para o reflexo atual, e o quadro usado como entrada da
+// segmentação. Seus tamanhos são recalculados por `resizeCanvas()` a
+// partir de `config.capture`/`config.trail`, ajustado pelo nível de
+// qualidade atual (ver performance.ts).
 const captureCanvas = document.createElement("canvas");
 const captureCtx = captureCanvas.getContext("2d", { willReadFrequently: true })!;
+const trailCaptureCanvas = document.createElement("canvas");
+const trailCaptureCtx = trailCaptureCanvas.getContext("2d", { willReadFrequently: true })!;
 const liveCanvas = document.createElement("canvas");
 const liveCtx = liveCanvas.getContext("2d", { willReadFrequently: true })!;
 const segInputCanvas = document.createElement("canvas");
@@ -48,9 +51,21 @@ const segInputCtx = segInputCanvas.getContext("2d", { willReadFrequently: true }
 const echoCanvas = document.createElement("canvas");
 const echoCtx = echoCanvas.getContext("2d")!;
 
+// Usados só pelo fallback em Canvas 2D: um acumulador de rastro próprio
+// (o mesmo princípio do acumulador na GPU — "ping-pong" entre duas
+// telas, desbotando a antiga e somando a captura nova), já que ali não
+// existe o Renderer em Rust para fazer isso.
+let trailAccumFront = document.createElement("canvas");
+let trailAccumFrontCtx = trailAccumFront.getContext("2d")!;
+let trailAccumBack = document.createElement("canvas");
+let trailAccumBackCtx = trailAccumBack.getContext("2d")!;
+let lastTrailUpdateMs: number | null = null;
+
 let lastCaptureMs = -Infinity;
+let lastTrailCaptureMs = -Infinity;
 let lastSegmentationRequestMs = -Infinity;
-let effectiveMemoryIntervalMs = 80;
+let effectiveMemoryIntervalMs = 500;
+let effectiveTrailIntervalMs = 90;
 let effectiveSegmentationIntervalMs = 200;
 
 let rafHandle = 0;
@@ -136,40 +151,52 @@ function setupDebugPanel(): void {
   });
 }
 
-/** Aplica os parâmetros de RF06/RF07/RF08 ao renderer (sem efeito no fallback Canvas 2D). */
+/** Aplica os parâmetros do campo de deslocamento temporal e da dissolução (sem efeito no fallback Canvas 2D). */
 function applyEffectsToRenderer(effects: EffectsConfig): void {
   if (!gpuRenderer) return;
   gpuRenderer.configureEffects(
-    effects.underwaterIntensity,
-    effects.underwaterFrequency,
-    effects.underwaterSpeed,
-    effects.underwaterAmplitude,
+    effects.displacementIntensity,
+    effects.displacementFrequency,
+    effects.displacementSpeed,
+    effects.displacementAmplitude,
     effects.dissolveFragmentation,
+    effects.trailDecayPerSecond,
+    effects.trailCaptureOpacity,
   );
   gpuRenderer.setAdditiveEchoes(effects.additiveEchoes);
 }
 
-/** Repassa a configuração de cada camada de memória (RF03) para o motor em Rust. */
-function applyMemoryLayerConfig(layer: MemoryLayerConfig, name: "short" | "intermediate" | "long", capacityScale: number): void {
+/** Repassa a configuração de uma camada de memória discreta para o motor em Rust. */
+function applyMemoryLayerConfig(layer: MemoryLayerConfig, name: "intermediate" | "long", capacityScale: number): void {
   const capacity = Math.max(4, Math.round(layer.capacity * capacityScale));
-  engine.configureLayer(name, capacity, layer.captureIntervalMs, layer.maxAgeMs, layer.baseWeight, layer.fadePower, layer.driftAmount);
+  engine.configureLayer(
+    name,
+    capacity,
+    layer.captureIntervalMs,
+    layer.maxAgeMs,
+    layer.baseWeight,
+    layer.fadePower,
+    layer.driftAmount,
+    layer.reappearanceStrength,
+    layer.reappearanceFrequency,
+  );
 }
 
 /**
- * Aplica um nível de qualidade (seção 9: "degradação progressiva"),
- * recalculando resoluções de captura, frequência da segmentação e
- * capacidade das camadas de memória a partir dos valores "base" de
+ * Aplica um nível de qualidade ("degradação progressiva"), recalculando
+ * resoluções de captura, frequência da segmentação e capacidade das
+ * camadas de memória a partir dos valores "base" de
  * `config/effects.json`, multiplicados pelos fatores de `QUALITY_SCALE`.
  */
 function applyQualityLevel(level: QualityLevel): void {
   const scale = QUALITY_SCALE[level];
 
   effectiveMemoryIntervalMs = config.capture.memoryIntervalMs;
+  effectiveTrailIntervalMs = config.trail.captureIntervalMs;
   effectiveSegmentationIntervalMs = Math.round(config.capture.segmentationIntervalMs * scale.segmentationInterval);
 
   resizeCanvas();
 
-  applyMemoryLayerConfig(config.memory.short, "short", scale.capacity);
   applyMemoryLayerConfig(config.memory.intermediate, "intermediate", scale.capacity);
   applyMemoryLayerConfig(config.memory.long, "long", scale.capacity);
 
@@ -219,7 +246,11 @@ function stopExperience(): void {
   engine.reset();
   performanceManager.reset();
   lastCaptureMs = -Infinity;
+  lastTrailCaptureMs = -Infinity;
   lastSegmentationRequestMs = -Infinity;
+  lastTrailUpdateMs = null;
+  trailAccumFrontCtx.clearRect(0, 0, trailAccumFront.width, trailAccumFront.height);
+  trailAccumBackCtx.clearRect(0, 0, trailAccumBack.width, trailAccumBack.height);
   ui.showScreen("intro");
 }
 
@@ -244,6 +275,11 @@ function renderFrame(): void {
     lastCaptureMs = now;
   }
 
+  if (now - lastTrailCaptureMs >= effectiveTrailIntervalMs) {
+    captureTrailFrame();
+    lastTrailCaptureMs = now;
+  }
+
   if (now - lastSegmentationRequestMs >= effectiveSegmentationIntervalMs) {
     requestSegmentation(now);
     lastSegmentationRequestMs = now;
@@ -256,7 +292,7 @@ function renderFrame(): void {
       renderWithGpu(activeCount, now);
       consecutiveGpuFailures = 0;
     } else if (ctx2d) {
-      renderWithCanvas2d(activeCount);
+      renderWithCanvas2d(activeCount, now);
     }
   } catch (err) {
     // Um erro isolado de um quadro não deve travar a experiência: o
@@ -295,17 +331,59 @@ function renderWithGpu(_activeCount: number, nowMs: number): void {
   const liveFrame = liveCtx.getImageData(0, 0, liveCanvas.width, liveCanvas.height);
   const liveBytes = new Uint8Array(liveFrame.data.buffer, liveFrame.data.byteOffset, liveFrame.data.byteLength);
 
-  gpuRenderer.render(engine, nowMs, liveCanvas.width, liveCanvas.height, liveBytes);
+  const trailFrame = trailCaptureCtx.getImageData(0, 0, trailCaptureCanvas.width, trailCaptureCanvas.height);
+  const trailBytes = new Uint8Array(trailFrame.data.buffer, trailFrame.data.byteOffset, trailFrame.data.byteLength);
+
+  gpuRenderer.render(
+    engine,
+    nowMs,
+    liveCanvas.width,
+    liveCanvas.height,
+    liveBytes,
+    trailCaptureCanvas.width,
+    trailCaptureCanvas.height,
+    trailBytes,
+  );
 }
 
 /** Caminho alternativo (sem WebGPU/WebGL2 suficiente): tudo desenhado em Canvas 2D na CPU. */
-function renderWithCanvas2d(activeCount: number): void {
+function renderWithCanvas2d(activeCount: number, nowMs: number): void {
   if (!ctx2d) return;
   // O reflexo atual é a base (preenche a tela inteira, sem transparência);
-  // os ecos são desenhados DEPOIS, por cima, com opacidade parcial. Na
-  // ordem contrária, o reflexo cobriria os ecos por completo.
+  // os ecos e o rastro são desenhados DEPOIS, por cima, com opacidade
+  // parcial. Na ordem contrária, o reflexo cobriria tudo por completo.
   drawCoverMirrored(camera.video, ctx2d, canvas.width, canvas.height);
   drawEchoesCanvas2d(activeCount);
+  updateAndDrawTrailCanvas2d(nowMs);
+}
+
+/**
+ * Versão em Canvas 2D do acumulador de rastro (mesma ideia do
+ * ping-pong na GPU, veja `renderer.rs`): desbota o conteúdo antigo e
+ * soma a captura nova, depois desenha o resultado por cima do reflexo.
+ */
+function updateAndDrawTrailCanvas2d(nowMs: number): void {
+  if (!ctx2d) return;
+
+  const dtSeconds = lastTrailUpdateMs === null ? 0 : Math.max(0, (nowMs - lastTrailUpdateMs) / 1000);
+  lastTrailUpdateMs = nowMs;
+  const decayFactor = Math.exp(-currentEffects.trailDecayPerSecond * dtSeconds);
+
+  trailAccumBackCtx.clearRect(0, 0, trailAccumBack.width, trailAccumBack.height);
+  trailAccumBackCtx.globalAlpha = decayFactor;
+  trailAccumBackCtx.drawImage(trailAccumFront, 0, 0, trailAccumBack.width, trailAccumBack.height);
+  trailAccumBackCtx.globalAlpha = currentEffects.trailCaptureOpacity;
+  trailAccumBackCtx.drawImage(trailCaptureCanvas, 0, 0, trailAccumBack.width, trailAccumBack.height);
+  trailAccumBackCtx.globalAlpha = 1;
+
+  // Troca os papéis: o que acabamos de construir passa a ser o "front".
+  [trailAccumFront, trailAccumBack] = [trailAccumBack, trailAccumFront];
+  [trailAccumFrontCtx, trailAccumBackCtx] = [trailAccumBackCtx, trailAccumFrontCtx];
+
+  ctx2d.save();
+  ctx2d.filter = "blur(1.5px)"; // um pouco de suavidade orgânica, já que não há distorção por shader aqui
+  ctx2d.drawImage(trailAccumFront, 0, 0, canvas.width, canvas.height);
+  ctx2d.restore();
 }
 
 /**
@@ -360,6 +438,23 @@ function captureIntoMemory(nowMs: number): void {
 
   const bytes = new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
   engine.insertFrame(nowMs, frame.width, frame.height, 1.0, bytes);
+}
+
+/**
+ * Captura um quadro reduzido (já com a máscara de segmentação aplicada)
+ * para alimentar o acumulador de rastro de movimento recente — a
+ * "memória curta" (ver `renderer.rs`). Roda numa frequência bem maior
+ * que `captureIntoMemory`, para o rastro acompanhar o movimento de
+ * perto.
+ */
+function captureTrailFrame(): void {
+  const { video } = camera;
+  if (video.videoWidth === 0) return;
+
+  drawCoverMirrored(video, trailCaptureCtx, trailCaptureCanvas.width, trailCaptureCanvas.height);
+  const frame = trailCaptureCtx.getImageData(0, 0, trailCaptureCanvas.width, trailCaptureCanvas.height);
+  applySegmentationToAlpha(frame.data, frame.width, frame.height);
+  trailCaptureCtx.putImageData(frame, 0, 0);
 }
 
 /**
@@ -452,6 +547,14 @@ function resizeCanvas(): void {
   const captureSize = downscaledSize(aspect, Math.max(16, Math.round(config.capture.memoryMaxDim * scale)));
   captureCanvas.width = captureSize.width;
   captureCanvas.height = captureSize.height;
+
+  const trailSize = downscaledSize(aspect, Math.max(16, Math.round(config.trail.captureMaxDim * scale)));
+  trailCaptureCanvas.width = trailSize.width;
+  trailCaptureCanvas.height = trailSize.height;
+  trailAccumFront.width = trailSize.width;
+  trailAccumFront.height = trailSize.height;
+  trailAccumBack.width = trailSize.width;
+  trailAccumBack.height = trailSize.height;
 
   const liveSize = downscaledSize(aspect, Math.max(64, Math.round(config.capture.liveMaxDim * scale)));
   liveCanvas.width = liveSize.width;

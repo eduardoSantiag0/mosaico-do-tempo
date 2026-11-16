@@ -12,13 +12,13 @@
 #[test]
 fn composite_shader_is_valid_wgsl() {
     let echo = include_str!("../src/shaders/echo.wgsl");
-    let underwater = include_str!("../src/shaders/underwater.wgsl");
+    let displacement = include_str!("../src/shaders/displacement.wgsl");
     let dissolve = include_str!("../src/shaders/dissolve.wgsl");
     let composite = include_str!("../src/shaders/composite.wgsl");
 
     // Precisa ser exatamente a mesma ordem usada em `build_shader_source`
     // dentro de `src/renderer.rs`.
-    let source = format!("{echo}\n{underwater}\n{dissolve}\n{composite}");
+    let source = format!("{echo}\n{displacement}\n{dissolve}\n{composite}");
 
     let module = naga::front::wgsl::parse_str(&source).expect("o shader deveria ter um WGSL válido (sem erros de sintaxe)");
 
