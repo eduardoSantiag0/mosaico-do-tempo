@@ -65,6 +65,14 @@ function handleSegmentRequest(message: { requestId: number; bitmap: ImageBitmap;
 
   try {
     segmenter.segmentForVideo(message.bitmap, message.timestampMs, (result) => {
+      // O modelo selfie_segmenter.tflite tem uma ÚNICA categoria (confira
+      // o labelmap embutido no próprio arquivo: ele é um .tflite com
+      // metadados em zip, contendo um labels.txt com apenas a linha
+      // "selfie"). Por isso `confidenceMasks` só tem um elemento, e ele
+      // já é a confiança de "é pessoa" — não existe um índice separado
+      // para "fundo". Não confundir com o modelo selfie_multiclass (6
+      // categorias) ou com o modelo de segmentação de cabelo, que têm
+      // mais de uma entrada em `confidenceMasks`.
       const mask = result.confidenceMasks?.[0];
       if (!mask) {
         post({ type: "error", message: "nenhuma máscara de confiança foi retornada" });
