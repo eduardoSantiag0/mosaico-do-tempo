@@ -26,6 +26,9 @@
 // 3 = rastro (o acumulador em si, desenhado na tela por cima de tudo):
 //     uma distorção orgânica suave, mas sem dissolução por máscara nem
 //     conversão para cinza — ele é a presença mais "viva" e recente.
+// 4 = modo de diagnóstico ("eco forçado"): ignora a cor da textura e
+//     desenha magenta sólido, só para provar visualmente que o eco/
+//     rastro chegou até aqui. Nunca usado na experiência final.
 struct DrawUniforms {
     offset_x: f32,
     offset_y: f32,
@@ -38,7 +41,11 @@ struct DrawUniforms {
     displacement_speed: f32,
     displacement_amplitude: f32,
     dissolve_fragmentation: f32,
-    padding: f32,
+    // Modo de diagnóstico ("distorção forçada"): só tem efeito no modo 1
+    // (reflexo atual). Quando > 0.5, força uma distorção forte e
+    // constante, em vez da distorção sutil ligada à presença real no
+    // acumulador de rastro — prova que o mecanismo funciona, por si só.
+    debug_force_distortion: f32,
 };
 
 @group(0) @binding(0) var<uniform> draw: DrawUniforms;
@@ -129,10 +136,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // passado deforma o presente" sem precisar desenhar nada visível
     // por cima do reflexo nesse ponto.
     if (draw.draw_mode == 1.0) {
-        let presence = textureSample(displacement_texture, quad_sampler, uv).a;
+        var presence = textureSample(displacement_texture, quad_sampler, uv).a;
+        var amplitude = draw.displacement_amplitude;
+
+        if (draw.debug_force_distortion > 0.5) {
+            // Diagnóstico: ignora a presença real do acumulador e força
+            // uma distorção sempre ligada e bem mais forte, só para
+            // comprovar que o mecanismo de distorção funciona.
+            presence = 1.0;
+            amplitude = amplitude * 6.0;
+        }
+
         uv = apply_organic_displacement(
             uv, draw.time_seconds, draw.displacement_intensity,
-            draw.displacement_frequency, draw.displacement_speed, draw.displacement_amplitude,
+            draw.displacement_frequency, draw.displacement_speed, amplitude,
             presence,
         );
         let color = textureSample(quad_texture, quad_sampler, uv);
@@ -151,6 +168,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         );
         let color = textureSample(quad_texture, quad_sampler, uv);
         return vec4<f32>(color.rgb, color.a * alpha);
+    }
+
+    // Modo 4 — diagnóstico ("eco forçado"): ignora a cor de verdade e
+    // desenha magenta sólido onde a textura tiver alfa > 0 (ou seja,
+    // onde a pessoa foi segmentada). Serve só para provar que o
+    // registro chegou até o renderizador.
+    if (draw.draw_mode == 4.0) {
+        let source_alpha = textureSample(quad_texture, quad_sampler, uv).a;
+        return vec4<f32>(1.0, 0.0, 1.0, source_alpha * alpha);
     }
 
     // Modo 2 — "liso" (atualização interna do acumulador de rastro):

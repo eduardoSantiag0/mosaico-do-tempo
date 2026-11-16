@@ -224,6 +224,24 @@ export class Renderer {
         wasm.__wbg_renderer_free(ptr, 0);
     }
     /**
+     * Nome do backend gráfico realmente em uso ("webgpu", "gl", etc.).
+     * Usado pelo modo de diagnóstico para confirmar o que está de fato
+     * rodando, em vez de supor.
+     * @returns {string}
+     */
+    backendName() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.renderer_backendName(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
      * Ajusta os parâmetros artísticos dos efeitos: o campo de
      * deslocamento temporal, a dissolução dos ecos, e o ritmo com que
      * o acumulador de rastro desbota.
@@ -312,12 +330,29 @@ export class Renderer {
     setAdditiveEchoes(enabled) {
         wasm.renderer_setAdditiveEchoes(this.__wbg_ptr, enabled);
     }
+    /**
+     * Liga/desliga os dois modos de diagnóstico forçado (ver
+     * `?debug=true` no app web): `force_magenta` faz os ecos e o
+     * rastro aparecerem em magenta sólido (prova que chegam até o
+     * renderizador); `force_distortion` faz o reflexo atual sofrer uma
+     * distorção forte e constante, independente de qualquer movimento
+     * real (prova que o mecanismo de distorção funciona).
+     * @param {boolean} force_magenta
+     * @param {boolean} force_distortion
+     */
+    setDebugFlags(force_magenta, force_distortion) {
+        wasm.renderer_setDebugFlags(this.__wbg_ptr, force_magenta, force_distortion);
+    }
 }
 if (Symbol.dispose) Renderer.prototype[Symbol.dispose] = Renderer.prototype.free;
 
 /**
- * Só serve para confirmar, do lado do JavaScript, que o WebAssembly
- * carregou corretamente.
+ * Confirma, do lado do JavaScript, que o WebAssembly carregou
+ * corretamente — e também DE QUAL COMMIT ele foi compilado
+ * (`MOSAICO_BUILD_ID`, definido em `build.rs`). Isso é importante para
+ * descobrir rapidamente se o navegador está rodando um `.wasm` velho
+ * (de antes da última mudança no motor), em vez de ficar sem saber se
+ * um efeito "não funciona" ou só "ainda não foi publicado".
  * @returns {string}
  */
 export function engine_version() {
@@ -1915,18 +1950,18 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1743, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1745, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_);
             return ret;
         },
         __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 80, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 82, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_);
             return ret;
         },
         __wbindgen_generic_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 80, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__25);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 82, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__27);
             return ret;
         },
         __wbindgen_generic_0000000000000004: function(arg0) {
@@ -1993,8 +2028,8 @@ function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bin
     wasm.wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_(arg0, arg1, arg2);
 }
 
-function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__25(arg0, arg1, arg2) {
-    wasm.wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__25(arg0, arg1, arg2);
+function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__27(arg0, arg1, arg2) {
+    wasm.wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__27(arg0, arg1, arg2);
 }
 
 function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_(arg0, arg1, arg2) {

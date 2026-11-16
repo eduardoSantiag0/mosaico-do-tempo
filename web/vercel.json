@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run config:sync && npx tsc -b && npx vite build",
+  "buildCommand": "node scripts/check-wasm-freshness.mjs && npm run config:sync && npx tsc -b && npx vite build",
   "outputDirectory": "dist",
   "framework": "vite"
 }

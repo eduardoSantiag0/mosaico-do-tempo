@@ -25,11 +25,15 @@ use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 pub use renderer::Renderer;
 
-/// Só serve para confirmar, do lado do JavaScript, que o WebAssembly
-/// carregou corretamente.
+/// Confirma, do lado do JavaScript, que o WebAssembly carregou
+/// corretamente — e também DE QUAL COMMIT ele foi compilado
+/// (`MOSAICO_BUILD_ID`, definido em `build.rs`). Isso é importante para
+/// descobrir rapidamente se o navegador está rodando um `.wasm` velho
+/// (de antes da última mudança no motor), em vez de ficar sem saber se
+/// um efeito "não funciona" ou só "ainda não foi publicado".
 #[wasm_bindgen]
 pub fn engine_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
+    format!("{}+{}", env!("CARGO_PKG_VERSION"), env!("MOSAICO_BUILD_ID"))
 }
 
 /// Converte o nome da camada (texto, vindo do JavaScript) para o tipo
@@ -256,7 +260,9 @@ mod tests {
 
     #[test]
     fn version_is_reported() {
-        assert_eq!(engine_version(), env!("CARGO_PKG_VERSION"));
+        let version = engine_version();
+        assert!(version.starts_with(env!("CARGO_PKG_VERSION")));
+        assert!(version.contains('+'), "esperava um build id depois de um '+', veio: {version}");
     }
 
     #[test]

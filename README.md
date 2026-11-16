@@ -10,6 +10,7 @@ Referências conceituais: Henri Bergson (duração e memória), Andrei Tarkovsky
 mosaico-do-tempo/
 ├── config/effects.json      # parâmetros artísticos (fonte da verdade)
 ├── engine/                  # motor em Rust, compilado para WebAssembly
+│   ├── build.rs             # embute o hash do commit git (MOSAICO_BUILD_ID) no binário
 │   ├── src/memory.rs        # TemporalMemory: camadas intermediária e prolongada (buffers circulares)
 │   ├── src/effects.rs       # parâmetros dos efeitos visuais (sem GPU)
 │   ├── src/renderer.rs      # Renderer wgpu/WGSL — acumulador de rastro + campo de deslocamento
@@ -41,12 +42,50 @@ A versão inicial desenhava a memória curta como dezenas de fotografias semitra
 
 ### Adaptações em relação à estrutura sugerida (e por quê)
 
-### Adaptações em relação à estrutura sugerida (e por quê)
-
 - **`config/effects.json` é copiado para `web/public/config/` antes de rodar/buildar** (script `web/scripts/sync-config.mjs`). O app é 100% estático e lê a configuração via `fetch()` em runtime; só arquivos dentro de `web/public/` podem ser servidos assim. Mantemos um único arquivo editável (`config/effects.json`) para não haver duas cópias divergentes.
 - **WGSL não tem `#include`.** `renderer.rs` concatena `echo.wgsl` + `displacement.wgsl` + `dissolve.wgsl` + `composite.wgsl` num texto só antes de mandar para a GPU, para que cada arquivo possa focar numa responsabilidade sem duplicar código.
 - **O "Compositor" está implementado como parte do `Renderer`** (`renderer.rs`): ele decide a ordem de desenho (reflexo atual → ecos → rastro) e aplica os parâmetros de `effects.rs`. Não criamos um struct `Compositor` separado porque, neste estágio, ele não teria lógica própria além de chamar o Renderer.
 - **A memória curta não é um `MemoryLayer` em Rust.** Ela é um acumulador contínuo (duas texturas em "ping-pong") que vive inteiramente na GPU, dentro do `Renderer`. Isso é intencional: um rastro de movimento fica mais orgânico sendo "desenhado e desbotando" continuamente do que sendo um monte de capturas discretas se sobrepondo, e também é mais barato (duas passagens de desenho fixas por quadro, em vez de uma por registro).
+
+## Auditoria do pipeline e modo de diagnóstico (v3)
+
+Depois da v2, veio um relato de que "os efeitos continuam imperceptíveis — parece uma câmera comum". Em vez de alterar números às cegas de novo, esta rodada teve dois focos: **auditar cada etapa do pipeline com evidência concreta** e **construir ferramentas de diagnóstico** para que qualquer pessoa (não só quem lê o código) consiga ver exatamente onde um efeito para de funcionar.
+
+### Causas-raiz investigadas
+
+| # | Hipótese levantada | Veredito | Evidência |
+|---|---|---|---|
+| A | `confidenceMasks?.[0]` pega a máscara do **fundo**, não da pessoa; deveria ser `[1]`. | **Falsa**, de novo — já tinha sido verificada e refutada na rodada anterior, mas a sugestão voltou a aparecer. | O arquivo `web/public/models/selfie_segmenter.tflite` é, ele mesmo, um `.tflite` com metadados em zip. `unzip -l` mostra **um único arquivo**, `labels.txt`, com **uma única linha**: `selfie`. Não existe uma segunda categoria "fundo" nesse modelo — `confidenceMasks` só tem um elemento, e ele já É a confiança de "é pessoa". Em vez de só reafirmar isso, construímos a **Visualização 1** do modo de diagnóstico (abaixo) para qualquer pessoa confirmar isso ao vivo, no próprio celular. |
+| B | O reflexo atual (`is_live`) nunca era distorcido pelas memórias. | **Verdadeira na v1**, já corrigida na v2 (campo de deslocamento temporal lendo o acumulador de rastro). Permanecia uma dúvida legítima: será que essa correção está realmente publicada e funcionando? | Resolvida por duas frentes: (1) o `?debug=true` agora tem um botão de "distorção forçada" que prova o mecanismo isoladamente da pergunta "o acumulador está recebendo movimento de verdade?"; (2) a verificação de frescor do WASM (abaixo) garante que o `.wasm` publicado corresponde ao código-fonte atual. |
+| C | O sistema guardava fotografias individuais em vez de acumulação temporal de verdade. | **Verdadeira na v1**, corrigida na v2 (acumulador de rastro em GPU com ping-pong + decaimento exponencial). | Testes automatizados (`effects::tests::decay_factor_*`) comprovam a matemática do decaimento; a **Visualização 2** do modo de diagnóstico mostra os registros realmente guardados nas camadas discretas, em tempo real. |
+| D | O fallback em Canvas 2D não reproduzia os efeitos essenciais. | **Parcialmente verdadeira.** O fallback agora tem seu próprio acumulador de rastro (em Canvas 2D) e tons de cinza progressivos nos ecos, mas **não** reproduz o campo de deslocamento no reflexo atual (Canvas 2D não faz amostragem de textura por shader) — em vez disso, ganhou uma distorção forçada por "faixas onduladas" só para o modo de diagnóstico provar que uma distorção espacial É possível nesse caminho. | Ver `web/src/main.ts`, funções `updateAndDrawTrailCanvas2d` e `drawCoverMirroredWithForcedDistortion`. |
+| E | O deploy pode estar servindo um `.wasm` desatualizado. | **Risco real, agora mitigado.** | `engine_version()` passou a incluir o hash do commit git (`build.rs` embute `MOSAICO_BUILD_ID`), visível na **Visualização 5**. Além disso, `web/scripts/check-wasm-freshness.mjs` roda antes de todo build na Vercel e **falha o build** se `engine/` foi alterado depois do último commit do `.wasm` publicado. |
+
+### Modo de diagnóstico visual (`?debug=true`)
+
+Acesse `https://seu-dominio.vercel.app/?debug=true` (funciona no celular — não depende de teclado). O painel de depuração abre automaticamente, com uma seção extra:
+
+1. **Máscara de segmentação** — uma prévia em preto e branco da máscara bruta do MediaPipe (branco = pessoa, preto = fundo), atualizada em tempo real. Se a pessoa aparecer preta e o fundo branco, *isso* seria evidência de uma inversão real — o que nunca foi observado nas verificações estáticas feitas aqui (ver causa A).
+2. **Memória temporal** — contagem de registros ativos nas camadas intermediária e prolongada, atualizada a cada quadro.
+3. **Eco forçado (magenta)** — checkbox que faz todo eco e o rastro aparecerem em magenta sólido, com opacidade máxima, ignorando o fade normal. Se nenhuma silhueta magenta aparecer ao se mover, o problema está em algum ponto *antes* da renderização (captura, segmentação ou armazenamento) — não no shader.
+4. **Distorção forçada** — checkbox que faz o reflexo atual sofrer uma distorção sempre ligada e bem mais intensa que o normal (6× a amplitude configurada), independente de qualquer movimento real. Prova que o mecanismo de deslocamento funciona, isolado da pergunta "o acumulador está recebendo movimento de verdade?".
+5. **Backend e versão** — mostra o backend gráfico realmente inicializado (`webgpu`, `gl` ou `canvas2d` — nunca "anunciado" sem sucesso: o nome só é lido depois que o adaptador foi de fato obtido), e o identificador de build (`engine_version()`, que agora inclui o hash do commit git).
+
+As duas flags de diagnóstico (magenta/distorção) funcionam nos dois caminhos de renderização (GPU e fallback Canvas 2D).
+
+### O que ficou comprovado por teste automatizado, e o que não
+
+**Comprovado por `cargo test` (15 testes) e pela validação offline do shader (`naga`):**
+- A segmentação usa o índice correto para este modelo (evidência estática no arquivo `.tflite`, não um teste automatizado, mas verificável por qualquer pessoa com `unzip`).
+- O decaimento do acumulador de rastro é matematicamente independente do FPS (`decay_factor_is_independent_of_frame_rate`).
+- O efeito de "reaparecimentos" da memória prolongada realmente faz a opacidade subir e descer, não só cair (`reappearance_pulse_creates_brighter_and_dimmer_moments`).
+- O shader principal (4 modos de desenho, incluindo os 2 modos de diagnóstico) é WGSL válido segundo o mesmo validador que o `wgpu` usa.
+
+**Não comprovado — requer o modo de diagnóstico num navegador real, o que este ambiente não tem:**
+- Se a silhueta magenta realmente aparece ao mover o corpo (Teste/Critério obrigatório da seção 10).
+- Se a distorção forçada realmente deforma a imagem visivelmente.
+- Se a máscara de segmentação, vista na Visualização 1, está de fato alinhada com a pessoa (e não invertida ou desalinhada por algum motivo não previsto na análise estática).
+- A intensidade artística final percebida num celular real — todos os valores em `config/effects.json` são estimativas iniciais.
 
 ## Requisitos para desenvolver
 
@@ -90,10 +129,11 @@ Edite `config/effects.json` e rode `npm run dev`/`npm run build` de novo (ou `np
 
 ## Testes implementados e resultados
 
-- **`cargo test` (`engine/`)** — 12 testes, todos passando:
+- **`cargo test` (`engine/`)** — 15 testes, todos passando:
   - `memory.rs`: inserção respeitando o intervalo de captura, expiração por timestamp (independente de FPS), limite de capacidade (buffer circular), fade de opacidade, reset de sessão, ordenação dos registros ativos, e o efeito de "reaparecimentos" (confirma que a opacidade sobe e desce, não só cai).
+  - `effects.rs`: a matemática do decaimento do acumulador de rastro — chega a 1.0 sem tempo passado, diminui com o tempo, e é independente do tamanho dos passos (FPS).
   - `lib.rs`: ciclo completo `insertFrame` → `update` → leitura dos registros ativos.
-  - `tests/wgsl_shaders_validate.rs`: valida a sintaxe e os tipos dos arquivos `.wgsl` (incluindo os 4 bindings de textura/buffer e os quatro `draw_mode` do shader principal) usando `naga` (o mesmo validador que o `wgpu` usa por baixo dos panos) — sem precisar de um navegador.
+  - `tests/wgsl_shaders_validate.rs`: valida a sintaxe e os tipos dos arquivos `.wgsl` (incluindo os bindings de textura/buffer e os cinco `draw_mode` do shader principal, com os dois modos de diagnóstico) usando `naga` (o mesmo validador que o `wgpu` usa por baixo dos panos) — sem precisar de um navegador.
 - **Smoke tests manuais do servidor de desenvolvimento**: todas as rotas (`index.html`, módulos TypeScript, o pacote Wasm, o worker de segmentação, o modelo `.tflite`, o runtime Wasm do MediaPipe, `config/effects.json`) foram verificadas retornando HTTP 200.
 - **`npm run build`**: build de produção completo (TypeScript com `strict` habilitado + `vite build`) roda sem erros.
 
@@ -126,8 +166,9 @@ O app é estático (`web/dist/`) e não precisa de backend. Como o ambiente de b
 1. Crie um projeto na Vercel a partir deste repositório.
 2. Em **Settings → General → Root Directory**, defina `web`.
 3. A Vercel deve detectar o framework (Vite) e usar `web/vercel.json` automaticamente (`buildCommand`/`outputDirectory`). Nenhuma variável de ambiente é necessária.
-4. Depois do primeiro deploy, toda alteração no motor Rust precisa ser recompilada **localmente** (`npm run wasm:build` dentro de `web/`) e commitada antes do próximo deploy — a Vercel não recompila o Rust.
+4. Depois do primeiro deploy, toda alteração no motor Rust precisa ser recompilada **localmente** (`npm run wasm:build` dentro de `web/`) e commitada antes do próximo deploy — a Vercel não recompila o Rust. Se isso for esquecido, `web/scripts/check-wasm-freshness.mjs` (já incluído em `buildCommand`) **falha o build** em vez de publicar silenciosamente um motor desatualizado.
 5. A Vercel fornece HTTPS automaticamente, necessário para `getUserMedia` (câmera) fora de `localhost`.
+6. Para confirmar que o deploy está servindo o código esperado, acesse `/?debug=true` e confira o campo "build" no painel de diagnóstico — ele mostra o hash do commit git de onde o `.wasm` publicado foi compilado.
 
 ### Acesso por QR Code
 

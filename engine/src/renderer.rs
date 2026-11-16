@@ -34,7 +34,7 @@
 // GPU não adivinha nada. Tentamos comentar o "porquê" de cada parte para
 // compensar isso.
 
-use crate::effects::EffectConfig;
+use crate::effects::{trail_decay_factor, EffectConfig};
 use crate::Engine;
 use wasm_bindgen::prelude::*;
 use wgpu::util::DeviceExt;
@@ -57,6 +57,10 @@ const DRAW_MODE_ECHO: f32 = 0.0;
 const DRAW_MODE_LIVE: f32 = 1.0;
 const DRAW_MODE_PLAIN: f32 = 2.0;
 const DRAW_MODE_TRAIL: f32 = 3.0;
+/// Modo de diagnóstico: ignora a textura e desenha magenta sólido. Serve
+/// só para provar, visualmente, que um eco/rastro chegou até o
+/// renderizador — nunca é usado na experiência "de verdade".
+const DRAW_MODE_DEBUG_MAGENTA: f32 = 4.0;
 
 /// Os valores que mandamos para a GPU antes de cada "quad" (retângulo)
 /// ser desenhado. Isso precisa corresponder EXATAMENTE à struct
@@ -76,10 +80,13 @@ struct DrawUniforms {
     displacement_speed: f32,
     displacement_amplitude: f32,
     dissolve_fragmentation: f32,
-    /// Sem uso — só está aqui para o tamanho da struct ficar "redondo"
-    /// (múltiplo de 16 bytes), que é uma regra de alinhamento da GPU
-    /// para esse tipo de dado (`var<uniform>`).
-    padding: f32,
+    /// Modo de diagnóstico (ver seção "modo debug" no topo do arquivo):
+    /// quando > 0.5, o reflexo atual (draw_mode == LIVE) usa uma
+    /// distorção bem mais forte e sempre ligada, em vez da distorção
+    /// sutil e ligada à presença real no acumulador de rastro. Serve
+    /// para provar que o mecanismo de distorção funciona, independente
+    /// de qualquer movimento real ter sido capturado.
+    debug_force_distortion: f32,
 }
 
 /// Monta os valores comuns a quase todo desenho, puxando os parâmetros
@@ -99,7 +106,7 @@ fn make_uniforms(effects: &EffectConfig, draw_mode: f32, opacity: f32, age_ratio
         displacement_speed: effects.displacement_speed,
         displacement_amplitude: effects.displacement_amplitude,
         dissolve_fragmentation: effects.dissolve_fragmentation,
-        padding: 0.0,
+        debug_force_distortion: 0.0,
     }
 }
 
@@ -220,6 +227,14 @@ pub struct Renderer {
     effects: EffectConfig,
     /// Se verdadeiro, os ecos usam a mistura aditiva em vez da normal.
     additive_echoes: bool,
+
+    /// Nome do backend gráfico realmente em uso ("webgpu", "gl", etc.),
+    /// lido do adaptador no momento em que ele foi obtido com sucesso —
+    /// nunca "anunciado" sem ter sido de fato inicializado.
+    backend_name: String,
+    /// Flags do modo de diagnóstico (ver `?debug=true` no app web).
+    debug_force_magenta: bool,
+    debug_force_distortion: bool,
 }
 
 #[wasm_bindgen]
@@ -249,6 +264,11 @@ impl Renderer {
             })
             .await
             .ok_or_else(|| JsValue::from_str("nenhum adaptador de GPU compatível foi encontrado"))?;
+
+        // Só registramos o nome do backend AQUI, depois de já termos um
+        // adaptador de verdade em mãos — nunca "anunciamos" um backend
+        // que não foi de fato inicializado com sucesso.
+        let backend_name = adapter.get_info().backend.to_str().to_string();
 
         // Usamos os limites "downlevel_webgl2", que é o conjunto de
         // limites mais restrito — assim, o mesmo código funciona tanto
@@ -391,7 +411,30 @@ impl Renderer {
             last_render_ms: None,
             effects: EffectConfig::default_config(),
             additive_echoes: false,
+            backend_name,
+            debug_force_magenta: false,
+            debug_force_distortion: false,
         })
+    }
+
+    /// Nome do backend gráfico realmente em uso ("webgpu", "gl", etc.).
+    /// Usado pelo modo de diagnóstico para confirmar o que está de fato
+    /// rodando, em vez de supor.
+    #[wasm_bindgen(js_name = backendName)]
+    pub fn backend_name(&self) -> String {
+        self.backend_name.clone()
+    }
+
+    /// Liga/desliga os dois modos de diagnóstico forçado (ver
+    /// `?debug=true` no app web): `force_magenta` faz os ecos e o
+    /// rastro aparecerem em magenta sólido (prova que chegam até o
+    /// renderizador); `force_distortion` faz o reflexo atual sofrer uma
+    /// distorção forte e constante, independente de qualquer movimento
+    /// real (prova que o mecanismo de distorção funciona).
+    #[wasm_bindgen(js_name = setDebugFlags)]
+    pub fn set_debug_flags(&mut self, force_magenta: bool, force_distortion: bool) {
+        self.debug_force_magenta = force_magenta;
+        self.debug_force_distortion = force_distortion;
     }
 
     /// Deve ser chamado sempre que o tamanho da tela mudar (incluindo
@@ -499,7 +542,8 @@ impl Renderer {
         self.live_texture.ensure_size(&self.device, live_width, live_height, "live_texture");
         self.live_texture.write_pixels(&self.queue, live_rgba);
 
-        let live_uniforms = make_uniforms(&self.effects, DRAW_MODE_LIVE, 1.0, 0.0, 0.0, 0.0, time_seconds);
+        let mut live_uniforms = make_uniforms(&self.effects, DRAW_MODE_LIVE, 1.0, 0.0, 0.0, 0.0, time_seconds);
+        live_uniforms.debug_force_distortion = if self.debug_force_distortion { 1.0 } else { 0.0 };
         self.draw_quad(&target_view, &self.live_texture.view, &self.trail_front.view, live_uniforms, false, true);
 
         let active_count = engine.active_count();
@@ -512,22 +556,30 @@ impl Renderer {
             self.echo_texture.ensure_size(&self.device, record.width, record.height, "echo_texture");
             self.echo_texture.write_pixels(&self.queue, &record.pixels);
 
-            let uniforms = make_uniforms(
-                &self.effects,
-                DRAW_MODE_ECHO,
-                record.opacity,
-                record.age_ratio,
-                record.offset_x,
-                record.offset_y,
-                time_seconds,
-            );
+            let uniforms = if self.debug_force_magenta {
+                // Modo de diagnóstico: ignora o fade normal e força
+                // opacidade máxima, para que a silhueta magenta seja
+                // sempre bem visível, independente da idade do registro.
+                make_uniforms(&self.effects, DRAW_MODE_DEBUG_MAGENTA, 1.0, record.age_ratio, record.offset_x, record.offset_y, time_seconds)
+            } else {
+                make_uniforms(
+                    &self.effects,
+                    DRAW_MODE_ECHO,
+                    record.opacity,
+                    record.age_ratio,
+                    record.offset_x,
+                    record.offset_y,
+                    time_seconds,
+                )
+            };
 
             self.draw_quad(&target_view, &self.echo_texture.view, &self.trail_front.view, uniforms, self.additive_echoes, false);
         }
 
         // O rastro de movimento recente vai por cima de tudo — é a
         // presença "mais viva" entre as memórias.
-        let trail_uniforms = make_uniforms(&self.effects, DRAW_MODE_TRAIL, 1.0, 0.0, 0.0, 0.0, time_seconds);
+        let trail_draw_mode = if self.debug_force_magenta { DRAW_MODE_DEBUG_MAGENTA } else { DRAW_MODE_TRAIL };
+        let trail_uniforms = make_uniforms(&self.effects, trail_draw_mode, 1.0, 0.0, 0.0, 0.0, time_seconds);
         self.draw_quad(&target_view, &self.trail_front.view, &self.trail_front.view, trail_uniforms, false, false);
 
         frame.present();
@@ -550,7 +602,7 @@ impl Renderer {
         // dá sempre o mesmo resultado visual independentemente do FPS,
         // porque depende do tempo real passado (`dt_seconds`), não da
         // quantidade de quadros.
-        let decay_factor = (-self.effects.trail_decay_per_second * dt_seconds).exp();
+        let decay_factor = trail_decay_factor(self.effects.trail_decay_per_second, dt_seconds);
 
         if !is_first_render {
             // Passo 1: copia o rastro antigo para o novo buffer, já

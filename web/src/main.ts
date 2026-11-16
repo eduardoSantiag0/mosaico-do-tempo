@@ -26,6 +26,15 @@ let config: AppConfig;
 let currentEffects: EffectsConfig;
 let debugPanel: DebugPanel | null = null;
 
+// `?debug=true` liga o modo de diagnóstico visual: mostra o painel
+// automaticamente (sem precisar da tecla "d") e acrescenta a seção de
+// diagnóstico (máscara de segmentação, contagem de memórias, eco
+// forçado, distorção forçada, backend/versão). Funciona também no
+// celular, onde não há teclado para apertar "d".
+const diagnosticsEnabled = new URLSearchParams(window.location.search).get("debug") === "true";
+let debugForceMagenta = false;
+let debugForceDistortion = false;
+
 type RenderMode = "gpu" | "canvas2d";
 let renderMode: RenderMode = "gpu";
 let gpuRenderer: Renderer | null = null;
@@ -134,16 +143,27 @@ function switchToCanvas2dFallback(): void {
 }
 
 function setupDebugPanel(): void {
-  if (!config.devPanel.enabled) return;
+  if (!config.devPanel.enabled && !diagnosticsEnabled) return;
 
-  debugPanel = new DebugPanel(ui.debugPanel, currentEffects, (effects) => {
-    currentEffects = effects;
-    applyEffectsToRenderer(currentEffects);
-  });
+  debugPanel = new DebugPanel(
+    ui.debugPanel,
+    currentEffects,
+    diagnosticsEnabled,
+    (effects) => {
+      currentEffects = effects;
+      applyEffectsToRenderer(currentEffects);
+    },
+    (forceMagenta, forceDistortion) => {
+      debugForceMagenta = forceMagenta;
+      debugForceDistortion = forceDistortion;
+      gpuRenderer?.setDebugFlags(forceMagenta, forceDistortion);
+    },
+  );
 
-  // O painel fica escondido por padrão mesmo quando habilitado; a tecla
-  // "d" alterna sua visibilidade (RF09: "pode ser habilitado durante o
-  // desenvolvimento").
+  // Com `?debug=true`, o painel já começa visível (sem precisar de
+  // teclado — importante porque o celular não tem a tecla "d"). Do
+  // contrário, fica escondido por padrão, e a tecla "d" alterna.
+  ui.setDebugVisible(diagnosticsEnabled);
   window.addEventListener("keydown", (event) => {
     if (event.key.toLowerCase() !== "d") return;
     const nowHidden = ui.debugPanel.classList.contains("hidden");
@@ -319,7 +339,62 @@ function renderFrame(): void {
     qualityLevel: performanceManager.qualityLevel,
   });
 
+  if (diagnosticsEnabled) {
+    updateDiagnosticsPanel(activeCount);
+  }
+
   rafHandle = requestAnimationFrame(renderFrame);
+}
+
+/**
+ * Preenche a seção de diagnóstico do painel (visualizações 2 e 5 do
+ * briefing de diagnóstico): backend/versão, contagem de memórias por
+ * camada, e uma prévia visual da máscara de segmentação mais recente.
+ */
+function updateDiagnosticsPanel(activeCount: number): void {
+  if (!debugPanel) return;
+
+  let intermediateCount = 0;
+  let longCount = 0;
+  for (let i = 0; i < activeCount; i++) {
+    if (engine.activeLayer(i) === "intermediate") intermediateCount++;
+    else if (engine.activeLayer(i) === "long") longCount++;
+  }
+
+  debugPanel.updateDiagnostics({
+    backendName: renderMode === "gpu" ? gpuRenderer?.backendName() ?? "desconhecido" : "canvas2d",
+    buildId: engine_version(),
+    liveWidth: liveCanvas.width,
+    liveHeight: liveCanvas.height,
+    layerCounts: { intermediate: intermediateCount, long: longCount },
+    segmentationReady: segmentation.isReady,
+  });
+
+  drawMaskPreview();
+}
+
+/** Visualização 1 do briefing de diagnóstico: desenha a máscara de segmentação bruta (branco = pessoa). */
+function drawMaskPreview(): void {
+  const previewCanvas = debugPanel?.maskPreviewCanvas;
+  if (!previewCanvas) return;
+
+  const mask = segmentation.getLatestMask();
+  if (!mask) return;
+
+  previewCanvas.width = mask.width;
+  previewCanvas.height = mask.height;
+  const previewCtx = previewCanvas.getContext("2d");
+  if (!previewCtx) return;
+
+  const rgba = new Uint8ClampedArray(mask.width * mask.height * 4);
+  for (let i = 0; i < mask.data.length; i++) {
+    const value = Math.round(mask.data[i] * 255);
+    rgba[i * 4] = value;
+    rgba[i * 4 + 1] = value;
+    rgba[i * 4 + 2] = value;
+    rgba[i * 4 + 3] = 255;
+  }
+  previewCtx.putImageData(new ImageData(rgba, mask.width, mask.height), 0, 0);
 }
 
 /** Caminho principal: desenha tudo na GPU (WebGPU/WebGL2) através do Renderer em Rust. */
@@ -352,7 +427,11 @@ function renderWithCanvas2d(activeCount: number, nowMs: number): void {
   // O reflexo atual é a base (preenche a tela inteira, sem transparência);
   // os ecos e o rastro são desenhados DEPOIS, por cima, com opacidade
   // parcial. Na ordem contrária, o reflexo cobriria tudo por completo.
-  drawCoverMirrored(camera.video, ctx2d, canvas.width, canvas.height);
+  if (debugForceDistortion) {
+    drawCoverMirroredWithForcedDistortion(camera.video, ctx2d, canvas.width, canvas.height, nowMs / 1000);
+  } else {
+    drawCoverMirrored(camera.video, ctx2d, canvas.width, canvas.height);
+  }
   drawEchoesCanvas2d(activeCount);
   updateAndDrawTrailCanvas2d(nowMs);
 }
@@ -386,6 +465,21 @@ function updateAndDrawTrailCanvas2d(nowMs: number): void {
   ctx2d.restore();
 }
 
+/** Computes the "cover" crop rectangle (like CSS `cover`) of a source inside a target of a different aspect ratio. */
+function computeCoverRect(sourceW: number, sourceH: number, targetW: number, targetH: number): { sx: number; sy: number; sw: number; sh: number } {
+  const targetAspect = targetW / targetH;
+  const sourceAspect = sourceW / sourceH;
+
+  if (sourceAspect > targetAspect) {
+    const sh = sourceH;
+    const sw = sh * targetAspect;
+    return { sx: (sourceW - sw) / 2, sy: 0, sw, sh };
+  }
+  const sw = sourceW;
+  const sh = sw / targetAspect;
+  return { sx: 0, sy: (sourceH - sh) / 2, sw, sh };
+}
+
 /**
  * Draws a source frame mirrored horizontally, covering the target without
  * distorting the subject (crop-to-fill, like CSS `cover`).
@@ -400,26 +494,51 @@ function drawCoverMirrored(
   const sourceH = source.videoHeight;
   if (!sourceW || !targetW || !targetH) return;
 
-  const targetAspect = targetW / targetH;
-  const sourceAspect = sourceW / sourceH;
-
-  let sx: number, sy: number, sw: number, sh: number;
-  if (sourceAspect > targetAspect) {
-    sh = sourceH;
-    sw = sh * targetAspect;
-    sx = (sourceW - sw) / 2;
-    sy = 0;
-  } else {
-    sw = sourceW;
-    sh = sw / targetAspect;
-    sx = 0;
-    sy = (sourceH - sh) / 2;
-  }
+  const { sx, sy, sw, sh } = computeCoverRect(sourceW, sourceH, targetW, targetH);
 
   target.save();
   target.translate(targetW, 0);
   target.scale(-1, 1);
   target.drawImage(source, sx, sy, sw, sh, 0, 0, targetW, targetH);
+  target.restore();
+}
+
+/**
+ * Diagnóstico ("distorção forçada" no Canvas 2D): a mesma imagem
+ * espelhada de `drawCoverMirrored`, mas cortada em faixas horizontais,
+ * cada uma deslocada lateralmente por uma onda de seno — uma distorção
+ * espacial grosseira, mas claramente visível, sem precisar de shader.
+ * Só prova que "é possível deformar a imagem"; não é a estética final.
+ */
+function drawCoverMirroredWithForcedDistortion(
+  source: HTMLVideoElement,
+  target: CanvasRenderingContext2D,
+  targetW: number,
+  targetH: number,
+  timeSeconds: number,
+): void {
+  const sourceW = source.videoWidth;
+  const sourceH = source.videoHeight;
+  if (!sourceW || !targetW || !targetH) return;
+
+  const { sx, sy, sw, sh } = computeCoverRect(sourceW, sourceH, targetW, targetH);
+
+  const stripCount = 24;
+  const stripHeight = Math.ceil(targetH / stripCount);
+  const maxOffsetPx = targetW * 0.06;
+
+  target.save();
+  target.translate(targetW, 0);
+  target.scale(-1, 1);
+  for (let strip = 0; strip < stripCount; strip++) {
+    const destY = strip * stripHeight;
+    const offsetX = Math.sin(timeSeconds * 2.2 + strip * 0.5) * maxOffsetPx;
+
+    const srcY = sy + (strip * stripHeight * sh) / targetH;
+    const srcStripHeight = (stripHeight * sh) / targetH;
+
+    target.drawImage(source, sx, srcY, sw, srcStripHeight, offsetX, destY, targetW, stripHeight + 1);
+  }
   target.restore();
 }
 
@@ -507,6 +626,17 @@ function drawEchoesCanvas2d(activeCount: number): void {
     echoCanvas.height = h;
     echoCtx.putImageData(imageData, 0, 0);
 
+    if (debugForceMagenta) {
+      // Diagnóstico: tinge a silhueta (preserva só o formato, via o
+      // canal alfa que já veio da segmentação) de magenta sólido, para
+      // provar que o eco chegou até aqui.
+      echoCtx.save();
+      echoCtx.globalCompositeOperation = "source-in";
+      echoCtx.fillStyle = "magenta";
+      echoCtx.fillRect(0, 0, w, h);
+      echoCtx.restore();
+    }
+
     const offsetX = engine.activeOffsetX(i) * canvas.width;
     const offsetY = engine.activeOffsetY(i) * canvas.height;
 
@@ -519,8 +649,11 @@ function drawEchoesCanvas2d(activeCount: number): void {
     const ageRatioPercent = Math.min(100, Math.round(engine.activeAgeRatio(i) * 200));
 
     ctx2d.save();
-    ctx2d.globalAlpha = engine.activeOpacity(i);
-    ctx2d.filter = `grayscale(${ageRatioPercent}%)`;
+    // No modo de diagnóstico (eco forçado), ignoramos o fade normal e o
+    // cinza (que lavaria a cor magenta) para a silhueta ficar sempre
+    // bem visível.
+    ctx2d.globalAlpha = debugForceMagenta ? 1 : engine.activeOpacity(i);
+    ctx2d.filter = debugForceMagenta ? "none" : `grayscale(${ageRatioPercent}%)`;
     ctx2d.translate(offsetX, offsetY);
     ctx2d.drawImage(echoCanvas, 0, 0, canvas.width, canvas.height);
     ctx2d.restore();

@@ -79,6 +79,12 @@ export class Renderer {
     free(): void;
     [Symbol.dispose](): void;
     /**
+     * Nome do backend gráfico realmente em uso ("webgpu", "gl", etc.).
+     * Usado pelo modo de diagnóstico para confirmar o que está de fato
+     * rodando, em vez de supor.
+     */
+    backendName(): string;
+    /**
      * Ajusta os parâmetros artísticos dos efeitos: o campo de
      * deslocamento temporal, a dissolução dos ecos, e o ritmo com que
      * o acumulador de rastro desbota.
@@ -114,11 +120,24 @@ export class Renderer {
      * Liga/desliga a mistura aditiva para os ecos.
      */
     setAdditiveEchoes(enabled: boolean): void;
+    /**
+     * Liga/desliga os dois modos de diagnóstico forçado (ver
+     * `?debug=true` no app web): `force_magenta` faz os ecos e o
+     * rastro aparecerem em magenta sólido (prova que chegam até o
+     * renderizador); `force_distortion` faz o reflexo atual sofrer uma
+     * distorção forte e constante, independente de qualquer movimento
+     * real (prova que o mecanismo de distorção funciona).
+     */
+    setDebugFlags(force_magenta: boolean, force_distortion: boolean): void;
 }
 
 /**
- * Só serve para confirmar, do lado do JavaScript, que o WebAssembly
- * carregou corretamente.
+ * Confirma, do lado do JavaScript, que o WebAssembly carregou
+ * corretamente — e também DE QUAL COMMIT ele foi compilado
+ * (`MOSAICO_BUILD_ID`, definido em `build.rs`). Isso é importante para
+ * descobrir rapidamente se o navegador está rodando um `.wasm` velho
+ * (de antes da última mudança no motor), em vez de ficar sem saber se
+ * um efeito "não funciona" ou só "ainda não foi publicado".
  */
 export function engine_version(): string;
 
@@ -145,11 +164,13 @@ export interface InitOutput {
     readonly engine_totalBytes: (a: number) => number;
     readonly engine_update: (a: number, b: number) => number;
     readonly engine_version: () => [number, number];
+    readonly renderer_backendName: (a: number) => [number, number];
     readonly renderer_configureEffects: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly renderer_create: (a: any, b: number, c: number) => any;
     readonly renderer_render: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number];
     readonly renderer_resize: (a: number, b: number, c: number) => void;
     readonly renderer_setAdditiveEchoes: (a: number, b: number) => void;
+    readonly renderer_setDebugFlags: (a: number, b: number, c: number) => void;
     readonly wgpu_render_bundle_draw: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wgpu_render_bundle_draw_indexed: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wgpu_render_bundle_set_pipeline: (a: number, b: bigint) => void;
@@ -165,7 +186,7 @@ export interface InitOutput {
     readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___js_sys_b2e07bec349c6cad___Function_fn_wasm_bindgen_9e9d2b03fac4fd08___JsValue_____wasm_bindgen_9e9d2b03fac4fd08___sys__Undefined___js_sys_b2e07bec349c6cad___Function_fn_wasm_bindgen_9e9d2b03fac4fd08___JsValue_____wasm_bindgen_9e9d2b03fac4fd08___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__25: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__27: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;

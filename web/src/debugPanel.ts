@@ -8,22 +8,56 @@ export interface DebugStats {
   qualityLevel: string;
 }
 
+/** Contagem de registros ativos por camada, para a visualização de memória temporal. */
+export interface LayerCounts {
+  intermediate: number;
+  long: number;
+}
+
+export interface DiagnosticsInfo {
+  backendName: string;
+  buildId: string;
+  liveWidth: number;
+  liveHeight: number;
+  layerCounts: LayerCounts;
+  segmentationReady: boolean;
+}
+
 /**
- * Painel de depuração (RF09/seção 8): mostra diagnóstico de desempenho e
- * deixa ajustar os parâmetros dos efeitos em tempo real. Só deve existir
- * durante o desenvolvimento — na versão de exposição, `config.devPanel.enabled`
+ * Painel de depuração: mostra diagnóstico de desempenho e deixa ajustar
+ * os parâmetros dos efeitos em tempo real. Só deve existir durante o
+ * desenvolvimento — na versão de exposição, `config.devPanel.enabled`
  * deve ser `false` (ver `config/effects.json`).
+ *
+ * Quando a URL tem `?debug=true`, uma seção extra de DIAGNÓSTICO aparece
+ * (máscara de segmentação, contagem de memórias, eco forçado em magenta,
+ * distorção forçada, backend/versão) — pensada para descobrir rapidamente
+ * em qual etapa do pipeline um efeito parou de funcionar, em vez de só
+ * confiar que "deveria estar funcionando" porque o código não lançou erro.
  */
 export class DebugPanel {
   private container: HTMLElement;
   private effects: EffectsConfig;
+  private diagnosticsEnabled: boolean;
   private onEffectsChange: (effects: EffectsConfig) => void;
-  private statsEl: HTMLElement;
+  private onDebugFlagsChange: (forceMagenta: boolean, forceDistortion: boolean) => void;
 
-  constructor(container: HTMLElement, initialEffects: EffectsConfig, onEffectsChange: (effects: EffectsConfig) => void) {
+  private statsEl: HTMLElement;
+  private diagnosticsEl: HTMLElement | null = null;
+  maskPreviewCanvas: HTMLCanvasElement | null = null;
+
+  constructor(
+    container: HTMLElement,
+    initialEffects: EffectsConfig,
+    diagnosticsEnabled: boolean,
+    onEffectsChange: (effects: EffectsConfig) => void,
+    onDebugFlagsChange: (forceMagenta: boolean, forceDistortion: boolean) => void,
+  ) {
     this.container = container;
     this.effects = { ...initialEffects };
+    this.diagnosticsEnabled = diagnosticsEnabled;
     this.onEffectsChange = onEffectsChange;
+    this.onDebugFlagsChange = onDebugFlagsChange;
     this.statsEl = document.createElement("div");
     this.render();
   }
@@ -33,6 +67,16 @@ export class DebugPanel {
     this.statsEl.textContent =
       `FPS ${stats.fps.toFixed(1)} · memória ${memoryKb}KB · ` +
       `ativos ${stats.activeRecordCount} · render ${stats.renderMode} · qualidade ${stats.qualityLevel}`;
+  }
+
+  /** Só tem efeito quando `diagnosticsEnabled` (`?debug=true`). */
+  updateDiagnostics(info: DiagnosticsInfo): void {
+    if (!this.diagnosticsEl) return;
+    this.diagnosticsEl.textContent =
+      `backend: ${info.backendName} · build: ${info.buildId} · ` +
+      `reflexo: ${info.liveWidth}×${info.liveHeight} · ` +
+      `memória intermediária: ${info.layerCounts.intermediate} · memória prolongada: ${info.layerCounts.long} · ` +
+      `segmentação: ${info.segmentationReady ? "pronta" : "carregando..."}`;
   }
 
   private render(): void {
@@ -70,6 +114,46 @@ export class DebugPanel {
     this.addCheckbox("Mistura aditiva nos ecos", this.effects.additiveEchoes, (v) => {
       this.effects.additiveEchoes = v;
       this.emit();
+    });
+
+    if (this.diagnosticsEnabled) {
+      this.renderDiagnostics();
+    }
+  }
+
+  /** Seção extra, só visível com `?debug=true` (ver seção 3 do briefing de diagnóstico). */
+  private renderDiagnostics(): void {
+    const heading = document.createElement("div");
+    heading.textContent = "— diagnóstico (?debug=true) —";
+    heading.style.marginTop = "8px";
+    heading.style.opacity = "0.7";
+    this.container.appendChild(heading);
+
+    this.diagnosticsEl = document.createElement("div");
+    this.container.appendChild(this.diagnosticsEl);
+
+    const maskLabel = document.createElement("div");
+    maskLabel.textContent = "Máscara de segmentação (branco = pessoa, preto = fundo):";
+    this.container.appendChild(maskLabel);
+
+    this.maskPreviewCanvas = document.createElement("canvas");
+    this.maskPreviewCanvas.style.width = "120px";
+    this.maskPreviewCanvas.style.height = "160px";
+    this.maskPreviewCanvas.style.border = "1px solid rgba(255,255,255,0.3)";
+    this.maskPreviewCanvas.style.imageRendering = "pixelated";
+    this.container.appendChild(this.maskPreviewCanvas);
+
+    let forceMagenta = false;
+    let forceDistortion = false;
+    const emitDebugFlags = () => this.onDebugFlagsChange(forceMagenta, forceDistortion);
+
+    this.addCheckbox("Eco forçado (magenta) — prova que os registros chegam ao renderizador", false, (v) => {
+      forceMagenta = v;
+      emitDebugFlags();
+    });
+    this.addCheckbox("Distorção forçada — prova que o mecanismo de deslocamento funciona", false, (v) => {
+      forceDistortion = v;
+      emitDebugFlags();
     });
   }
 
