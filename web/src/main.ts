@@ -6,7 +6,16 @@ import { loadConfig, type AppConfig, type EffectsConfig, type MemoryLayerConfig 
 import { DebugPanel } from "./debugPanel.js";
 import { PerformanceManager, QUALITY_SCALE, type QualityLevel } from "./performance.js";
 
-const canvas = required<HTMLCanvasElement>("#stage");
+// `canvas` é o elemento que a câmera é desenhada em cima. Começamos com
+// `#stage` (onde tentamos WebGPU/WebGL2); se a GPU falhar — seja na
+// inicialização, seja repetidamente durante os quadros — trocamos para
+// `#stage-fallback`, um <canvas> totalmente separado, nunca tocado pela
+// GPU. Isso é necessário porque, uma vez que um <canvas> consegue criar
+// um contexto WebGPU/WebGL2 com sucesso, o navegador não deixa mais
+// pedir um contexto 2D nele — só um novo elemento resolve isso (RF:
+// "fallback funcional para navegadores incompatíveis").
+let canvas = required<HTMLCanvasElement>("#stage");
+const stageFallbackCanvas = required<HTMLCanvasElement>("#stage-fallback");
 
 const ui = new UI();
 const camera = new CameraController();
@@ -17,14 +26,12 @@ let config: AppConfig;
 let currentEffects: EffectsConfig;
 let debugPanel: DebugPanel | null = null;
 
-// Se o navegador não tiver WebGPU nem WebGL2 suficiente, caímos de volta
-// para um desenho mais simples em Canvas 2D (RF: "fallback funcional para
-// navegadores incompatíveis"). Só um dos dois modos é usado por vez,
-// porque um <canvas> só pode ter um tipo de contexto de desenho.
 type RenderMode = "gpu" | "canvas2d";
 let renderMode: RenderMode = "gpu";
 let gpuRenderer: Renderer | null = null;
 let ctx2d: CanvasRenderingContext2D | null = null;
+let consecutiveGpuFailures = 0;
+const MAX_CONSECUTIVE_GPU_FAILURES = 5;
 
 // Estes três offscreen canvases guardam, respectivamente: o quadro
 // reduzido usado para a memória temporal, o quadro (um pouco maior) usado
@@ -90,9 +97,25 @@ async function initRenderer(): Promise<void> {
     console.info("[mosaico] renderização via WebGPU/WebGL2");
   } catch (err) {
     console.warn("[mosaico] WebGPU/WebGL2 indisponível, usando fallback em Canvas 2D:", err);
-    ctx2d = canvas.getContext("2d", { alpha: false });
-    renderMode = "canvas2d";
+    switchToCanvas2dFallback();
   }
+}
+
+/**
+ * Troca para o <canvas> de fallback e usa um contexto 2D nele. Pode ser
+ * chamado tanto na inicialização (WebGPU/WebGL2 nunca funcionou) quanto
+ * depois, se o caminho GPU começar a falhar repetidamente nos quadros.
+ */
+function switchToCanvas2dFallback(): void {
+  if (renderMode === "canvas2d") return; // já estamos no fallback
+
+  canvas.classList.add("hidden");
+  stageFallbackCanvas.classList.remove("hidden");
+  canvas = stageFallbackCanvas;
+  ctx2d = canvas.getContext("2d", { alpha: false });
+  gpuRenderer = null;
+  renderMode = "canvas2d";
+  resizeCanvas();
 }
 
 function setupDebugPanel(): void {
@@ -231,13 +254,25 @@ function renderFrame(): void {
   try {
     if (renderMode === "gpu" && gpuRenderer) {
       renderWithGpu(activeCount, now);
+      consecutiveGpuFailures = 0;
     } else if (ctx2d) {
       renderWithCanvas2d(activeCount);
     }
   } catch (err) {
     // Um erro isolado de um quadro não deve travar a experiência: o
-    // reflexo precisa continuar aparecendo nos próximos quadros.
+    // reflexo precisa continuar aparecendo nos próximos quadros. Mas se
+    // o caminho GPU falhar muitas vezes seguidas, algo está
+    // estruturalmente errado (não é só um problema de um quadro) — nesse
+    // caso, trocamos para o fallback em Canvas 2D em vez de continuar
+    // mostrando a tela preta.
     console.error("[mosaico] erro ao desenhar o quadro:", err);
+    if (renderMode === "gpu") {
+      consecutiveGpuFailures++;
+      if (consecutiveGpuFailures >= MAX_CONSECUTIVE_GPU_FAILURES) {
+        console.error(`[mosaico] GPU falhou ${consecutiveGpuFailures} quadros seguidos, trocando para fallback em Canvas 2D`);
+        switchToCanvas2dFallback();
+      }
+    }
   }
 
   debugPanel?.updateStats({
