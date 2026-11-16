@@ -1,0 +1,15 @@
+{
+  "name": "mosaico-engine",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "mosaico_engine_bg.wasm",
+    "mosaico_engine.js",
+    "mosaico_engine.d.ts"
+  ],
+  "main": "mosaico_engine.js",
+  "types": "mosaico_engine.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

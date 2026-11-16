@@ -1,0 +1,5 @@
+{
+  "buildCommand": "npm run config:sync && npx tsc -b && npx vite build",
+  "outputDirectory": "dist",
+  "framework": "vite"
+}
