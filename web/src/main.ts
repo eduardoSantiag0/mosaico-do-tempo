@@ -69,6 +69,8 @@ let trailAccumFrontCtx = trailAccumFront.getContext("2d")!;
 let trailAccumBack = document.createElement("canvas");
 let trailAccumBackCtx = trailAccumBack.getContext("2d")!;
 let lastTrailUpdateMs: number | null = null;
+/** O `lastTrailCaptureMs` já somado ao acumulador do fallback Canvas 2D — evita somar a mesma captura mais de uma vez. */
+let lastAppliedTrailCaptureMs: number | null = null;
 
 let lastCaptureMs = -Infinity;
 let lastTrailCaptureMs = -Infinity;
@@ -264,11 +266,13 @@ function stopExperience(): void {
   pauseLoop();
   camera.stop();
   engine.reset();
+  gpuRenderer?.reset(); // esvazia o acumulador de rastro na GPU, para a próxima sessão não começar com vestígios da anterior
   performanceManager.reset();
   lastCaptureMs = -Infinity;
   lastTrailCaptureMs = -Infinity;
   lastSegmentationRequestMs = -Infinity;
   lastTrailUpdateMs = null;
+  lastAppliedTrailCaptureMs = null;
   trailAccumFrontCtx.clearRect(0, 0, trailAccumFront.width, trailAccumFront.height);
   trailAccumBackCtx.clearRect(0, 0, trailAccumBack.width, trailAccumBack.height);
   ui.showScreen("intro");
@@ -418,6 +422,11 @@ function renderWithGpu(_activeCount: number, nowMs: number): void {
     trailCaptureCanvas.width,
     trailCaptureCanvas.height,
     trailBytes,
+    // Identifica QUANDO a captura foi tirada (não quando este quadro
+    // está sendo desenhado) — é assim que o Rust sabe se já viu essa
+    // captura antes e evita somá-la ao acumulador mais de uma vez
+    // enquanto nenhuma nova chega (ver update_trail_accumulator).
+    lastTrailCaptureMs,
   );
 }
 
@@ -451,8 +460,17 @@ function updateAndDrawTrailCanvas2d(nowMs: number): void {
   trailAccumBackCtx.clearRect(0, 0, trailAccumBack.width, trailAccumBack.height);
   trailAccumBackCtx.globalAlpha = decayFactor;
   trailAccumBackCtx.drawImage(trailAccumFront, 0, 0, trailAccumBack.width, trailAccumBack.height);
-  trailAccumBackCtx.globalAlpha = currentEffects.trailCaptureOpacity;
-  trailAccumBackCtx.drawImage(trailCaptureCanvas, 0, 0, trailAccumBack.width, trailAccumBack.height);
+
+  // Só soma a captura quando ela é realmente nova (mesmo raciocínio do
+  // caminho GPU, em renderer.rs::update_trail_accumulator). Esta função
+  // roda a cada quadro, mas uma captura nova só chega a cada
+  // `effectiveTrailIntervalMs` — sem essa checagem, a mesma imagem seria
+  // somada várias vezes seguidas e o rastro ficaria opaco rápido demais.
+  if (lastAppliedTrailCaptureMs !== lastTrailCaptureMs) {
+    trailAccumBackCtx.globalAlpha = currentEffects.trailCaptureOpacity;
+    trailAccumBackCtx.drawImage(trailCaptureCanvas, 0, 0, trailAccumBack.width, trailAccumBack.height);
+    lastAppliedTrailCaptureMs = lastTrailCaptureMs;
+  }
   trailAccumBackCtx.globalAlpha = 1;
 
   // Troca os papéis: o que acabamos de construir passa a ser o "front".

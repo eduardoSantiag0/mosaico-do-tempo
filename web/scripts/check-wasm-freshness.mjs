@@ -2,56 +2,46 @@
 // usa o `.wasm` que já está comitado em `web/src/wasm/`. Isso cria um
 // jeito fácil de publicar um motor desatualizado por acidente: editar
 // `engine/src/*.rs` ou os shaders `.wgsl`, esquecer de rodar
-// `npm run wasm:build`, e comitar/publicar assim mesmo — o código Rust
-// muda, mas o `.wasm` publicado continua sendo o de antes.
+// `npm run wasm:build`, e comitar/publicar assim mesmo.
 //
-// Este script compara a DATA do último commit que tocou `engine/` com a
-// data do último commit que tocou o `.wasm` compilado. Se o motor foi
-// modificado DEPOIS do `.wasm`, o build falha — em vez de publicar
-// silenciosamente um efeito "corrigido" que, na verdade, nunca chegou
-// ao navegador.
+// Este script recalcula o hash do código-fonte do engine (o mesmo
+// cálculo de `hash-engine-source.mjs`) e compara com o hash salvo em
+// `web/src/wasm/source-hash.txt` no momento em que o `.wasm` foi
+// compilado pela última vez (veja `write-wasm-source-hash.mjs`, que
+// roda como parte de `npm run wasm:build`). Se não baterem, o `.wasm`
+// comitado não corresponde ao código-fonte atual — o build falha em
+// vez de publicar isso silenciosamente.
 //
-// Limitação conhecida: se o ambiente de build fizer um "shallow clone"
-// (histórico do git incompleto), esta verificação pode não conseguir
-// comparar corretamente e deixar passar um caso que deveria falhar — ela
-// nunca bloqueia um build válido por engano, mas em alguns ambientes
-// pode não pegar todo caso de motor desatualizado.
+// Comparamos o CONTEÚDO (hash), não datas de commit do git: assim,
+// funciona corretamente mesmo se o ambiente de build só tiver um clone
+// parcial do histórico do repositório.
 
-import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { computeEngineSourceHash } from "./hash-engine-source.mjs";
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(scriptsDir, "..", "..");
+const engineDir = join(scriptsDir, "..", "..", "engine");
+const hashFilePath = join(scriptsDir, "..", "src", "wasm", "source-hash.txt");
 
-function lastCommitTimestamp(relativePath) {
-  try {
-    const output = execSync(`git log -1 --format=%ct -- "${relativePath}"`, {
-      cwd: repoRoot,
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .trim();
-    return output ? parseInt(output, 10) : 0;
-  } catch {
-    // Sem git (ou sem histórico) — não há como verificar; não bloqueia o build.
-    return 0;
-  }
+const currentHash = computeEngineSourceHash(engineDir);
+
+let publishedHash = null;
+try {
+  publishedHash = readFileSync(hashFilePath, "utf8").trim();
+} catch {
+  // Arquivo ainda não existe — tratado como "não corresponde" abaixo.
 }
 
-const engineTimestamp = Math.max(
-  lastCommitTimestamp("engine/src"),
-  lastCommitTimestamp("engine/Cargo.toml"),
-  lastCommitTimestamp("engine/Cargo.lock"),
-);
-const wasmTimestamp = lastCommitTimestamp("web/src/wasm/mosaico_engine_bg.wasm");
-
-if (engineTimestamp > wasmTimestamp) {
+if (publishedHash !== currentHash) {
   console.error("");
-  console.error("[mosaico] ERRO: engine/ foi modificado DEPOIS do último commit do WebAssembly compilado (web/src/wasm/).");
-  console.error("[mosaico] Rode `npm run wasm:build` dentro de web/, confira o resultado e comite-o antes de publicar.");
+  console.error("[mosaico] ERRO: o WebAssembly publicado (web/src/wasm/) não corresponde ao código-fonte atual de engine/.");
+  console.error(`[mosaico]   hash esperado (código-fonte agora): ${currentHash}`);
+  console.error(`[mosaico]   hash publicado (do último build):   ${publishedHash ?? "(nenhum — arquivo source-hash.txt não encontrado)"}`);
+  console.error("[mosaico] Rode `npm run wasm:build` dentro de web/, confira o resultado e comite-o (inclusive web/src/wasm/source-hash.txt) antes de publicar.");
   console.error("");
   process.exit(1);
 }
 
-console.log("[mosaico] OK: o WebAssembly publicado corresponde às mudanças mais recentes em engine/.");
+console.log("[mosaico] OK: o WebAssembly publicado corresponde exatamente ao código-fonte atual de engine/.");

@@ -110,7 +110,16 @@ export class Renderer {
      * Deve ser chamado uma vez por quadro, depois de o JavaScript já
      * ter chamado `engine.update(now_ms)`.
      */
-    render(engine: Engine, now_ms: number, live_width: number, live_height: number, live_rgba: Uint8Array | number[], trail_capture_width: number, trail_capture_height: number, trail_capture_rgba: Uint8Array | number[]): void;
+    render(engine: Engine, now_ms: number, live_width: number, live_height: number, live_rgba: Uint8Array | number[], trail_capture_width: number, trail_capture_height: number, trail_capture_rgba: Uint8Array | number[], trail_capture_timestamp_ms: number): void;
+    /**
+     * Esvazia o acumulador de rastro (memória curta). Deve ser chamado
+     * quando a experiência de um visitante termina (RF10), para que a
+     * sessão seguinte não comece com vestígios da anterior. O
+     * acumulador já desbota muito rápido por conta própria (meia-vida
+     * de menos de 1 segundo com os valores padrão), mas limpar
+     * explicitamente é mais correto do que confiar só nisso.
+     */
+    reset(): void;
     /**
      * Deve ser chamado sempre que o tamanho da tela mudar (incluindo
      * quando o celular gira).
@@ -167,7 +176,8 @@ export interface InitOutput {
     readonly renderer_backendName: (a: number) => [number, number];
     readonly renderer_configureEffects: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly renderer_create: (a: any, b: number, c: number) => any;
-    readonly renderer_render: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number];
+    readonly renderer_render: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number];
+    readonly renderer_reset: (a: number) => void;
     readonly renderer_resize: (a: number, b: number, c: number) => void;
     readonly renderer_setAdditiveEchoes: (a: number, b: number) => void;
     readonly renderer_setDebugFlags: (a: number, b: number, c: number) => void;
@@ -186,7 +196,7 @@ export interface InitOutput {
     readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___js_sys_b2e07bec349c6cad___Function_fn_wasm_bindgen_9e9d2b03fac4fd08___JsValue_____wasm_bindgen_9e9d2b03fac4fd08___sys__Undefined___js_sys_b2e07bec349c6cad___Function_fn_wasm_bindgen_9e9d2b03fac4fd08___JsValue_____wasm_bindgen_9e9d2b03fac4fd08___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__27: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__28: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;

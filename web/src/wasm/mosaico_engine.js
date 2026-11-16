@@ -290,14 +290,16 @@ export class Renderer {
      * @param {number} trail_capture_width
      * @param {number} trail_capture_height
      * @param {Uint8Array | number[]} trail_capture_rgba
+     * @param {number} trail_capture_timestamp_ms
      */
-    render(engine, now_ms, live_width, live_height, live_rgba, trail_capture_width, trail_capture_height, trail_capture_rgba) {
+    render(engine, now_ms, live_width, live_height, live_rgba, trail_capture_width, trail_capture_height, trail_capture_rgba, trail_capture_timestamp_ms) {
         _assertClass(engine, Engine);
         const val3 = +now_ms;
         const val4 = +live_width;
         const val5 = +live_height;
         const val6 = +trail_capture_width;
         const val7 = +trail_capture_height;
+        const val8 = +trail_capture_timestamp_ms;
         let ptr0, len0, ptr1, len1;
         try {
             ptr0 = passArray8ToWasm0(live_rgba, wasm.__wbindgen_malloc);
@@ -309,10 +311,21 @@ export class Renderer {
             if (ptr0) { wasm.__wbindgen_free(ptr0, len0 * 1, 1); }
             throw e;
         }
-        const ret = wasm.renderer_render(this.__wbg_ptr, engine.__wbg_ptr, val3, val4, val5, ptr0, len0, val6, val7, ptr1, len1);
+        const ret = wasm.renderer_render(this.__wbg_ptr, engine.__wbg_ptr, val3, val4, val5, ptr0, len0, val6, val7, ptr1, len1, val8);
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
         }
+    }
+    /**
+     * Esvazia o acumulador de rastro (memória curta). Deve ser chamado
+     * quando a experiência de um visitante termina (RF10), para que a
+     * sessão seguinte não comece com vestígios da anterior. O
+     * acumulador já desbota muito rápido por conta própria (meia-vida
+     * de menos de 1 segundo com os valores padrão), mas limpar
+     * explicitamente é mais correto do que confiar só nisso.
+     */
+    reset() {
+        wasm.renderer_reset(this.__wbg_ptr);
     }
     /**
      * Deve ser chamado sempre que o tamanho da tela mudar (incluindo
@@ -1961,7 +1974,7 @@ function __wbg_get_imports() {
         },
         __wbindgen_generic_0000000000000003: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 82, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__27);
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__28);
             return ret;
         },
         __wbindgen_generic_0000000000000004: function(arg0) {
@@ -2028,8 +2041,8 @@ function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bin
     wasm.wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_(arg0, arg1, arg2);
 }
 
-function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__27(arg0, arg1, arg2) {
-    wasm.wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__27(arg0, arg1, arg2);
+function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__28(arg0, arg1, arg2) {
+    wasm.wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__28(arg0, arg1, arg2);
 }
 
 function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_(arg0, arg1, arg2) {

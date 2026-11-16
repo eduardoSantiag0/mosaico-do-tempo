@@ -42,10 +42,25 @@ self.onmessage = async (event: MessageEvent<RequestMessage>) => {
 async function setup(): Promise<void> {
   const fileset = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
 
-  segmenter = await ImageSegmenter.createFromOptions(fileset, {
+  try {
+    segmenter = await createSegmenter(fileset, "GPU");
+  } catch (err) {
+    // Nem todo navegador/celular tem um delegado GPU disponível para o
+    // MediaPipe (varia por fabricante/driver). Sem este fallback, a
+    // segmentação simplesmente nunca funcionaria nesses aparelhos — a
+    // máscara nunca chegaria, e as memórias mostrariam o cenário
+    // inteiro, não só a pessoa (RF04 ainda garante que o reflexo em si
+    // continua funcionando, mas sem o efeito de silhueta).
+    console.warn("[mosaico] delegado GPU do MediaPipe falhou, tentando CPU:", err);
+    segmenter = await createSegmenter(fileset, "CPU");
+  }
+}
+
+function createSegmenter(fileset: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>, delegate: "GPU" | "CPU"): Promise<ImageSegmenter> {
+  return ImageSegmenter.createFromOptions(fileset, {
     baseOptions: {
       modelAssetPath: "/models/selfie_segmenter.tflite",
-      delegate: "GPU",
+      delegate,
     },
     runningMode: "VIDEO",
     outputConfidenceMasks: true,

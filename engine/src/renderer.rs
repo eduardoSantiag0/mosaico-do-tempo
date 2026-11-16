@@ -223,6 +223,13 @@ pub struct Renderer {
     /// quanto tempo realmente passou (em segundos) desde então, para
     /// que o desbotamento do rastro dependa do tempo, não do FPS.
     last_render_ms: Option<f64>,
+    /// O "identificador" (timestamp) da última captura que já foi
+    /// somada ao acumulador de rastro. `render()` é chamado a cada
+    /// quadro (até 60 vezes por segundo), mas o JavaScript só manda uma
+    /// captura realmente nova de tempos em tempos — sem guardar isso,
+    /// somaríamos a MESMA captura várias vezes seguidas, e o rastro
+    /// ficaria opaco rápido demais (ver `update_trail_accumulator`).
+    last_trail_capture_applied_ms: Option<f64>,
 
     effects: EffectConfig,
     /// Se verdadeiro, os ecos usam a mistura aditiva em vez da normal.
@@ -409,6 +416,7 @@ impl Renderer {
             trail_front,
             trail_back,
             last_render_ms: None,
+            last_trail_capture_applied_ms: None,
             effects: EffectConfig::default_config(),
             additive_echoes: false,
             backend_name,
@@ -435,6 +443,21 @@ impl Renderer {
     pub fn set_debug_flags(&mut self, force_magenta: bool, force_distortion: bool) {
         self.debug_force_magenta = force_magenta;
         self.debug_force_distortion = force_distortion;
+    }
+
+    /// Esvazia o acumulador de rastro (memória curta). Deve ser chamado
+    /// quando a experiência de um visitante termina (RF10), para que a
+    /// sessão seguinte não comece com vestígios da anterior. O
+    /// acumulador já desbota muito rápido por conta própria (meia-vida
+    /// de menos de 1 segundo com os valores padrão), mas limpar
+    /// explicitamente é mais correto do que confiar só nisso.
+    pub fn reset(&mut self) {
+        let no_extra_usage = wgpu::TextureUsages::empty();
+        self.trail_front = ReusableTexture::new(&self.device, 1, 1, "trail_front", wgpu::TextureUsages::RENDER_ATTACHMENT);
+        self.trail_back = ReusableTexture::new(&self.device, 1, 1, "trail_back", wgpu::TextureUsages::RENDER_ATTACHMENT);
+        self.trail_capture_texture = ReusableTexture::new(&self.device, 1, 1, "trail_capture_texture", no_extra_usage);
+        self.last_trail_capture_applied_ms = None;
+        self.last_render_ms = None;
     }
 
     /// Deve ser chamado sempre que o tamanho da tela mudar (incluindo
@@ -507,6 +530,10 @@ impl Renderer {
         trail_capture_width: u32,
         trail_capture_height: u32,
         trail_capture_rgba: &[u8],
+        // Identifica QUAL captura é essa (o JavaScript manda o
+        // timestamp de quando ela foi tirada, não de quando `render()`
+        // foi chamado). Veja `last_trail_capture_applied_ms`.
+        trail_capture_timestamp_ms: f64,
     ) -> Result<(), JsValue> {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
@@ -534,7 +561,14 @@ impl Renderer {
         };
         self.last_render_ms = Some(now_ms);
 
-        self.update_trail_accumulator(trail_capture_width, trail_capture_height, trail_capture_rgba, dt_seconds, is_first_render);
+        self.update_trail_accumulator(
+            trail_capture_width,
+            trail_capture_height,
+            trail_capture_rgba,
+            trail_capture_timestamp_ms,
+            dt_seconds,
+            is_first_render,
+        );
 
         // O reflexo atual é a BASE: desenhamos ele primeiro (limpando a
         // tela), e os ecos (vestígios do passado) são desenhados DEPOIS,
@@ -591,11 +625,18 @@ impl Renderer {
     /// Atualiza o acumulador de rastro (ping-pong entre `trail_front` e
     /// `trail_back`): desbota o conteúdo antigo e soma a captura nova.
     /// Ao final, `trail_front` é a versão pronta para este quadro.
-    fn update_trail_accumulator(&mut self, capture_width: u32, capture_height: u32, capture_rgba: &[u8], dt_seconds: f32, is_first_render: bool) {
+    fn update_trail_accumulator(
+        &mut self,
+        capture_width: u32,
+        capture_height: u32,
+        capture_rgba: &[u8],
+        capture_timestamp_ms: f64,
+        dt_seconds: f32,
+        is_first_render: bool,
+    ) {
         self.trail_back.ensure_size(&self.device, capture_width, capture_height, "trail_back");
         self.trail_capture_texture
             .ensure_size(&self.device, capture_width, capture_height, "trail_capture_texture");
-        self.trail_capture_texture.write_pixels(&self.queue, capture_rgba);
 
         // `decay_factor` é o quanto do rastro antigo sobrevive neste
         // quadro. Usamos uma curva exponencial (`exp(-taxa * dt)`): ela
@@ -611,17 +652,34 @@ impl Renderer {
             self.draw_quad(&self.trail_back.view, &self.trail_front.view, &self.trail_front.view, decay_uniforms, false, true);
         }
 
-        // Passo 2: soma a captura nova por cima (sem limpar — por isso
-        // `clear_before_drawing` é `true` só quando pulamos o passo 1).
-        let capture_uniforms = make_uniforms(&self.effects, DRAW_MODE_PLAIN, self.effects.trail_capture_opacity, 0.0, 0.0, 0.0, 0.0);
-        self.draw_quad(
-            &self.trail_back.view,
-            &self.trail_capture_texture.view,
-            &self.trail_front.view,
-            capture_uniforms,
-            false,
-            is_first_render,
-        );
+        // Passo 2: soma a captura nova por cima — MAS só se ela for
+        // realmente nova. `render()` é chamado a cada quadro (até ~60
+        // vezes por segundo), mas o JavaScript só tira uma captura nova
+        // de tempos em tempos (por padrão, a cada 90ms). Sem essa
+        // checagem, a MESMA captura seria somada várias vezes seguidas
+        // enquanto nenhuma nova chega — e como cada soma deixa o
+        // acumulador mais opaco, ele ficaria quase tão sólido quanto a
+        // pessoa de verdade em poucos quadros, em vez de um rastro que
+        // vai desbotando. Comparamos pelo timestamp da CAPTURA (que o
+        // JavaScript manda junto), não pelo timestamp do quadro.
+        let is_new_capture = self.last_trail_capture_applied_ms != Some(capture_timestamp_ms);
+        if is_new_capture {
+            self.trail_capture_texture.write_pixels(&self.queue, capture_rgba);
+
+            // `clear_before_drawing` só precisa ser `true` aqui quando
+            // pulamos o passo 1 (ou seja, no primeiro quadro de todos).
+            let capture_uniforms = make_uniforms(&self.effects, DRAW_MODE_PLAIN, self.effects.trail_capture_opacity, 0.0, 0.0, 0.0, 0.0);
+            self.draw_quad(
+                &self.trail_back.view,
+                &self.trail_capture_texture.view,
+                &self.trail_front.view,
+                capture_uniforms,
+                false,
+                is_first_render,
+            );
+
+            self.last_trail_capture_applied_ms = Some(capture_timestamp_ms);
+        }
 
         std::mem::swap(&mut self.trail_front, &mut self.trail_back);
     }

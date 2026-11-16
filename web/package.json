@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "wasm:build": "wasm-pack build ../engine --target web --out-dir ../web/src/wasm --out-name mosaico_engine --release && node -e \"require('fs').rmSync('src/wasm/.gitignore',{force:true})\"",
+    "wasm:build": "wasm-pack build ../engine --target web --out-dir ../web/src/wasm --out-name mosaico_engine --release && node -e \"require('fs').rmSync('src/wasm/.gitignore',{force:true})\" && node scripts/write-wasm-source-hash.mjs",
     "config:sync": "node scripts/sync-config.mjs",
     "check:wasm-freshness": "node scripts/check-wasm-freshness.mjs",
     "predev": "npm run wasm:build && npm run config:sync",
