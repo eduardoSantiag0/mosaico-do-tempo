@@ -1,37 +1,58 @@
-//! Temporal memory: three independent circular-buffer layers that hold
-//! reduced-resolution snapshots of the visitor's silhouette over time.
-//! Expiration and fade are driven entirely by timestamps (ms), so playback
-//! is correct regardless of the capture frame rate.
-
-use std::collections::VecDeque;
+// Este arquivo implementa a "memória temporal" do Mosaico do Tempo.
+//
+// A ideia é simples: cada vez que a câmera captura uma imagem reduzida da
+// pessoa, guardamos essa imagem com um "timestamp" (o momento em que ela foi
+// capturada, em milissegundos). Com o tempo, decidimos se cada imagem ainda
+// deve aparecer na tela (ela "existe" por um tempo e depois expira) e o
+// quão visível ela deve estar (ela vai ficando mais transparente/fraca).
+//
+// Para não gastar memória demais, guardamos no máximo N imagens por camada
+// (um "buffer circular": quando enche, a mais antiga é descartada para
+// abrir espaço para a mais nova).
+//
+// Existem três camadas, cada uma com sua própria duração e seu próprio
+// ritmo de captura:
+// - Curta: rastros recentes, capturados com bastante frequência.
+// - Intermediária: silhuetas capturadas com menos frequência, duram mais.
+// - Prolongada: vestígios raros e fracos, que duram até 2 minutos.
 
 #[derive(Clone)]
 pub struct MemoryRecord {
+    /// O instante (em milissegundos) em que esta imagem foi capturada.
     pub timestamp_ms: f64,
     pub width: u32,
     pub height: u32,
-    /// RGBA pixels, already reduced in resolution by the caller.
+    /// Os pixels da imagem, no formato RGBA (4 bytes por pixel), já em
+    /// resolução reduzida. Nunca guardamos o frame da câmera em tamanho
+    /// completo aqui.
     pub pixels: Vec<u8>,
-    /// Caller-supplied visual weight for this capture (e.g. motion amount), 0..1.
+    /// Um valor de 0.0 a 1.0 que diz "o quão importante/visível" essa
+    /// captura deveria ser desde o início (pode vir sempre 1.0 por enquanto).
     pub intensity: f32,
 }
 
-impl MemoryRecord {
-    fn byte_len(&self) -> usize {
-        self.pixels.len()
-    }
-}
-
+/// Configuração de uma camada de memória. Todos esses valores podem ser
+/// ajustados depois (por isso ficam numa struct separada, e não "fixos"
+/// no código).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LayerConfig {
+    /// Quantas imagens, no máximo, essa camada guarda ao mesmo tempo.
     pub capacity: usize,
+    /// Tempo mínimo (em ms) entre duas capturas aceitas por esta camada.
+    /// Isso controla a "taxa de amostragem" — não precisamos guardar todo
+    /// frame da câmera, só uma amostra de tempos em tempos.
     pub capture_interval_ms: f64,
+    /// Depois de quanto tempo (em ms) uma imagem desta camada deve
+    /// desaparecer completamente.
     pub max_age_ms: f64,
-    /// Peak opacity multiplier applied to this layer's records.
+    /// Opacidade máxima que um registro desta camada pode ter (0.0 a 1.0).
     pub base_weight: f32,
-    /// Exponent of the (1 - age/max_age) fade curve; >1 holds longer then drops fast.
+    /// Controla a "curva" do desaparecimento. Com valor 1.0 o fade é linear.
+    /// Valores maiores fazem a imagem continuar bem visível por mais tempo
+    /// e só desaparecer rápido perto do fim da vida.
     pub fade_power: f32,
-    /// Max lateral drift (in normalized units) applied as records age.
+    /// O quanto a imagem pode "derivar" (se deslocar) lateralmente conforme
+    /// envelhece. 0.0 significa "não se move".
     pub drift_amount: f32,
 }
 
@@ -70,85 +91,8 @@ impl LayerConfig {
     }
 }
 
-pub struct MemoryLayer {
-    pub config: LayerConfig,
-    records: VecDeque<MemoryRecord>,
-    last_capture_ms: Option<f64>,
-}
-
-impl MemoryLayer {
-    pub fn new(config: LayerConfig) -> Self {
-        MemoryLayer {
-            config,
-            records: VecDeque::with_capacity(config.capacity),
-            last_capture_ms: None,
-        }
-    }
-
-    pub fn reconfigure(&mut self, config: LayerConfig) {
-        self.config = config;
-        while self.records.len() > self.config.capacity {
-            self.records.pop_front();
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.records.clear();
-        self.last_capture_ms = None;
-    }
-
-    pub fn len(&self) -> usize {
-        self.records.len()
-    }
-
-    pub fn total_bytes(&self) -> usize {
-        self.records.iter().map(MemoryRecord::byte_len).sum()
-    }
-
-    /// Attempts to insert a capture, respecting this layer's own sampling
-    /// rate. Returns true if the record was accepted.
-    pub fn maybe_insert(&mut self, record: MemoryRecord) -> bool {
-        if let Some(last) = self.last_capture_ms {
-            if record.timestamp_ms - last < self.config.capture_interval_ms {
-                return false;
-            }
-        }
-        if self.config.capacity == 0 {
-            return false;
-        }
-        if self.records.len() >= self.config.capacity {
-            self.records.pop_front();
-        }
-        self.last_capture_ms = Some(record.timestamp_ms);
-        self.records.push_back(record);
-        true
-    }
-
-    /// Drops records older than this layer's max age, given the current time.
-    pub fn expire(&mut self, now_ms: f64) {
-        while let Some(front) = self.records.front() {
-            if now_ms - front.timestamp_ms > self.config.max_age_ms {
-                self.records.pop_front();
-            } else {
-                break;
-            }
-        }
-    }
-
-    /// Oldest-first iterator over records that are currently visible
-    /// (non-negative age, within max_age), paired with their computed fade.
-    pub fn active(&self, now_ms: f64) -> impl Iterator<Item = (&MemoryRecord, RecordFade)> {
-        let cfg = self.config;
-        self.records.iter().filter_map(move |r| {
-            let age_ms = now_ms - r.timestamp_ms;
-            if age_ms < 0.0 || age_ms > cfg.max_age_ms {
-                return None;
-            }
-            Some((r, compute_fade(r, &cfg, age_ms)))
-        })
-    }
-}
-
+/// Dados calculados sobre o quanto um registro deve "mostrar" neste
+/// instante: sua opacidade (fade) e um pequeno deslocamento de posição.
 #[derive(Clone, Copy, Debug)]
 pub struct RecordFade {
     pub age_ms: f64,
@@ -157,12 +101,42 @@ pub struct RecordFade {
     pub offset_y: f32,
 }
 
-fn compute_fade(record: &MemoryRecord, cfg: &LayerConfig, age_ms: f64) -> RecordFade {
-    let age_ratio = (age_ms / cfg.max_age_ms).clamp(0.0, 1.0) as f32;
-    let remaining = (1.0 - age_ratio).max(0.0);
-    let opacity = remaining.powf(cfg.fade_power) * cfg.base_weight * record.intensity.clamp(0.0, 1.0);
+/// Calcula a opacidade e o deslocamento de um registro, dado a idade dele
+/// (quanto tempo já passou desde que foi capturado).
+fn compute_fade(record: &MemoryRecord, config: &LayerConfig, age_ms: f64) -> RecordFade {
+    // "age_ratio" vai de 0.0 (acabou de nascer) até 1.0 (está no limite de
+    // idade e vai desaparecer).
+    let mut age_ratio = age_ms / config.max_age_ms;
+    if age_ratio < 0.0 {
+        age_ratio = 0.0;
+    }
+    if age_ratio > 1.0 {
+        age_ratio = 1.0;
+    }
+    let age_ratio = age_ratio as f32;
 
-    let drift = cfg.drift_amount * age_ratio;
+    // Quanto "tempo de vida" ainda resta, de 1.0 (recém-nascido) a 0.0 (expirando).
+    let remaining = 1.0 - age_ratio;
+
+    // powf eleva "remaining" à potência "fade_power": isso só muda o
+    // formato da curva de desaparecimento (mais lenta ou mais rápida).
+    let fade_curve = remaining.powf(config.fade_power);
+
+    let mut intensity = record.intensity;
+    if intensity < 0.0 {
+        intensity = 0.0;
+    }
+    if intensity > 1.0 {
+        intensity = 1.0;
+    }
+
+    let opacity = fade_curve * config.base_weight * intensity;
+
+    // O deslocamento usa seno/cosseno só para dar uma variação suave e
+    // "orgânica" — não é um movimento aleatório de verdade, é sempre o
+    // mesmo para o mesmo timestamp, o que é bom: o efeito fica estável
+    // quadro a quadro em vez de "tremer".
+    let drift = config.drift_amount * age_ratio;
     let seed = record.timestamp_ms * 0.0017;
     let offset_x = (seed.sin() as f32) * drift;
     let offset_y = (seed.cos() as f32) * drift * 0.6;
@@ -175,6 +149,117 @@ fn compute_fade(record: &MemoryRecord, cfg: &LayerConfig, age_ms: f64) -> Record
     }
 }
 
+/// Uma camada de memória: guarda uma lista de registros (no máximo
+/// `config.capacity` deles) e sabe como inserir, expirar e listar os
+/// registros que ainda estão "vivos".
+pub struct MemoryLayer {
+    pub config: LayerConfig,
+    records: Vec<MemoryRecord>,
+    /// Timestamp da última captura aceita. Usamos isso para saber se já
+    /// passou tempo suficiente para aceitar uma nova (ver `capture_interval_ms`).
+    last_capture_ms: Option<f64>,
+}
+
+impl MemoryLayer {
+    pub fn new(config: LayerConfig) -> Self {
+        MemoryLayer {
+            config,
+            records: Vec::new(),
+            last_capture_ms: None,
+        }
+    }
+
+    /// Troca a configuração desta camada. Se a nova capacidade for menor
+    /// que a quantidade de registros que já temos, descartamos os mais
+    /// antigos até caber.
+    pub fn reconfigure(&mut self, config: LayerConfig) {
+        self.config = config;
+        while self.records.len() > self.config.capacity {
+            // o índice 0 é sempre o registro mais antigo, porque sempre
+            // inserimos no final da lista (veja `maybe_insert`).
+            self.records.remove(0);
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.records.clear();
+        self.last_capture_ms = None;
+    }
+
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    /// Soma o tamanho (em bytes) de todas as imagens guardadas nesta
+    /// camada. Serve para sabermos quanta memória está sendo usada.
+    pub fn total_bytes(&self) -> usize {
+        let mut total = 0;
+        for record in &self.records {
+            total += record.pixels.len();
+        }
+        total
+    }
+
+    /// Tenta guardar uma nova captura nesta camada. Pode ser rejeitada se
+    /// ainda não passou tempo suficiente desde a última captura aceita
+    /// (cada camada tem seu próprio ritmo, veja `capture_interval_ms`).
+    /// Retorna `true` se o registro foi mesmo guardado.
+    pub fn maybe_insert(&mut self, record: MemoryRecord) -> bool {
+        if let Some(last) = self.last_capture_ms {
+            let time_since_last = record.timestamp_ms - last;
+            if time_since_last < self.config.capture_interval_ms {
+                return false;
+            }
+        }
+
+        if self.config.capacity == 0 {
+            return false;
+        }
+
+        // Se já estamos no limite, removemos o mais antigo (índice 0)
+        // para abrir espaço — isso é o "buffer circular".
+        if self.records.len() >= self.config.capacity {
+            self.records.remove(0);
+        }
+
+        self.last_capture_ms = Some(record.timestamp_ms);
+        self.records.push(record);
+        true
+    }
+
+    /// Remove os registros cuja idade já passou de `max_age_ms`, usando o
+    /// instante atual `now_ms`. Note que isso depende só do tempo (dos
+    /// timestamps), nunca da quantidade de frames por segundo.
+    pub fn expire(&mut self, now_ms: f64) {
+        let mut kept = Vec::new();
+        for record in self.records.drain(..) {
+            let age_ms = now_ms - record.timestamp_ms;
+            if age_ms <= self.config.max_age_ms {
+                kept.push(record);
+            }
+        }
+        self.records = kept;
+    }
+
+    /// Retorna, do mais antigo para o mais novo, todos os registros que
+    /// ainda estão visíveis agora (`now_ms`), junto com sua opacidade e
+    /// deslocamento já calculados.
+    pub fn active(&self, now_ms: f64) -> Vec<(MemoryRecord, RecordFade)> {
+        let mut result = Vec::new();
+        for record in &self.records {
+            let age_ms = now_ms - record.timestamp_ms;
+            if age_ms < 0.0 || age_ms > self.config.max_age_ms {
+                // Ainda não existia, ou já devia ter expirado.
+                continue;
+            }
+            let fade = compute_fade(record, &self.config, age_ms);
+            result.push((record.clone(), fade));
+        }
+        result
+    }
+}
+
+/// Identifica cada uma das três camadas de memória.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerKind {
     Short,
@@ -182,7 +267,9 @@ pub enum LayerKind {
     Long,
 }
 
-/// A fully resolved record ready for compositing/rendering.
+/// Um registro já "pronto para desenhar": junta a imagem com tudo que o
+/// compositor/renderizador precisa saber sobre ela (de qual camada veio,
+/// opacidade, deslocamento, etc).
 pub struct RenderRecord {
     pub layer: LayerKind,
     pub timestamp_ms: f64,
@@ -195,6 +282,7 @@ pub struct RenderRecord {
     pub pixels: Vec<u8>,
 }
 
+/// Junta as três camadas (curta, intermediária, prolongada) num só lugar.
 pub struct TemporalMemory {
     pub short: MemoryLayer,
     pub intermediate: MemoryLayer,
@@ -218,16 +306,9 @@ impl TemporalMemory {
         }
     }
 
-    pub fn layer(&self, kind: LayerKind) -> &MemoryLayer {
-        match kind {
-            LayerKind::Short => &self.short,
-            LayerKind::Intermediate => &self.intermediate,
-            LayerKind::Long => &self.long,
-        }
-    }
-
-    /// Feeds one capture into every layer; each layer independently decides
-    /// (via its own sampling interval) whether to actually keep it.
+    /// Entrega a mesma captura para as três camadas. Cada uma decide por
+    /// conta própria (usando `maybe_insert`) se vai realmente guardar ou
+    /// não, de acordo com seu próprio ritmo de captura.
     pub fn insert(&mut self, record: MemoryRecord) {
         self.short.maybe_insert(record.clone());
         self.intermediate.maybe_insert(record.clone());
@@ -250,16 +331,25 @@ impl TemporalMemory {
         self.long.clear();
     }
 
-    /// Oldest-first across all layers, so the current reflex is painted last.
+    /// Junta os registros visíveis das três camadas numa única lista,
+    /// ordenada do mais antigo para o mais novo (assim, quando formos
+    /// desenhar na tela, o reflexo atual fica sempre por cima dos
+    /// vestígios do passado).
     pub fn collect_active(&self, now_ms: f64) -> Vec<RenderRecord> {
-        let mut out = Vec::new();
-        for (kind, layer) in [
+        let mut all = Vec::new();
+
+        // A ordem aqui (long, intermediate, short) não importa de verdade,
+        // porque vamos ordenar tudo por idade no final. Só juntamos tudo
+        // numa lista só primeiro.
+        let layers = [
             (LayerKind::Long, &self.long),
             (LayerKind::Intermediate, &self.intermediate),
             (LayerKind::Short, &self.short),
-        ] {
+        ];
+
+        for (kind, layer) in layers {
             for (record, fade) in layer.active(now_ms) {
-                out.push(RenderRecord {
+                all.push(RenderRecord {
                     layer: kind,
                     timestamp_ms: record.timestamp_ms,
                     age_ms: fade.age_ms,
@@ -268,12 +358,14 @@ impl TemporalMemory {
                     opacity: fade.opacity,
                     offset_x: fade.offset_x,
                     offset_y: fade.offset_y,
-                    pixels: record.pixels.clone(),
+                    pixels: record.pixels,
                 });
             }
         }
-        out.sort_by(|a, b| b.age_ms.partial_cmp(&a.age_ms).unwrap());
-        out
+
+        // Mais antigo (idade maior) primeiro, mais novo (idade menor) por último.
+        all.sort_by(|a, b| b.age_ms.partial_cmp(&a.age_ms).unwrap());
+        all
     }
 }
 
@@ -287,9 +379,11 @@ impl Default for TemporalMemory {
 mod tests {
     use super::*;
 
-    fn record(ts: f64) -> MemoryRecord {
+    // Função auxiliar só para os testes: cria um registro de 4x4 pixels
+    // bem simples, com o timestamp que a gente quiser.
+    fn record(timestamp_ms: f64) -> MemoryRecord {
         MemoryRecord {
-            timestamp_ms: ts,
+            timestamp_ms,
             width: 4,
             height: 4,
             pixels: vec![255; 4 * 4 * 4],
@@ -309,7 +403,7 @@ mod tests {
         });
 
         assert!(layer.maybe_insert(record(0.0)));
-        assert!(!layer.maybe_insert(record(50.0)), "too soon, should be rejected");
+        assert!(!layer.maybe_insert(record(50.0)), "ainda não passou tempo suficiente");
         assert!(layer.maybe_insert(record(120.0)));
         assert_eq!(layer.len(), 2);
     }
@@ -329,13 +423,14 @@ mod tests {
         layer.maybe_insert(record(500.0));
         layer.maybe_insert(record(1_200.0));
 
-        // At 1600ms, ts=0 (age 1600) and ts=500 (age 1100) both exceed the
-        // 1000ms max age; only ts=1200 (age 400) is still within it.
+        // Em now = 1600: o registro de t=0 tem idade 1600 (expirou) e o de
+        // t=500 tem idade 1100 (também expirou, pois max_age é 1000).
+        // Só o de t=1200 (idade 400) continua vivo.
         layer.expire(1_600.0);
-        assert_eq!(layer.len(), 1, "both records past max_age should be dropped");
+        assert_eq!(layer.len(), 1);
 
         layer.expire(3_000.0);
-        assert_eq!(layer.len(), 0, "all records should now have expired");
+        assert_eq!(layer.len(), 0, "a essa altura, tudo já devia ter expirado");
     }
 
     #[test]
@@ -353,15 +448,21 @@ mod tests {
             layer.maybe_insert(record(i as f64 * 10.0));
         }
 
-        assert_eq!(layer.len(), 3);
-        let timestamps: Vec<f64> = layer.active(40.0).map(|(r, _)| r.timestamp_ms).collect();
+        assert_eq!(layer.len(), 3, "a capacidade é 3, então só os 3 últimos devem sobrar");
+
+        let mut timestamps = Vec::new();
+        for (r, _fade) in layer.active(40.0) {
+            timestamps.push(r.timestamp_ms);
+        }
         assert_eq!(timestamps, vec![20.0, 30.0, 40.0]);
     }
 
     #[test]
     fn expiration_is_independent_of_sampling_rate() {
-        // Simulate a variable-FPS capture loop: whatever the frame rate,
-        // visibility is decided purely by (now - timestamp).
+        // Mesmo com um ritmo de captura bem irregular (como aconteceria
+        // numa câmera de verdade, com FPS variável), a visibilidade de
+        // cada registro depende só de "quanto tempo passou", não de
+        // "quantos frames passaram".
         let mut layer = MemoryLayer::new(LayerConfig {
             capacity: 100,
             capture_interval_ms: 0.0,
@@ -376,12 +477,19 @@ mod tests {
             layer.maybe_insert(record(t));
         }
 
-        let visible_at_1000: Vec<f64> = layer.active(1_000.0).map(|(r, _)| r.timestamp_ms).collect();
+        let mut visible_at_1000 = Vec::new();
+        for (r, _fade) in layer.active(1_000.0) {
+            visible_at_1000.push(r.timestamp_ms);
+        }
         assert!(visible_at_1000.contains(&980.0));
 
-        // ts=0 sits exactly at max_age when now=1000; push one ms further
-        // so its age unambiguously exceeds the limit.
-        let visible_at_1001: Vec<f64> = layer.active(1_001.0).map(|(r, _)| r.timestamp_ms).collect();
+        // Em now=1000, o registro t=0 tem idade exatamente 1000 (igual ao
+        // limite), então ainda conta como visível. Em now=1001, sua idade
+        // passa de 1000 e ele já deve ter desaparecido.
+        let mut visible_at_1001 = Vec::new();
+        for (r, _fade) in layer.active(1_001.0) {
+            visible_at_1001.push(r.timestamp_ms);
+        }
         assert!(!visible_at_1001.contains(&0.0));
     }
 
@@ -397,8 +505,11 @@ mod tests {
         });
         layer.maybe_insert(record(0.0));
 
-        let (_, fade_start) = layer.active(0.0).next().unwrap();
-        let (_, fade_end) = layer.active(999.999).next().unwrap();
+        let active_now = layer.active(0.0);
+        let (_, fade_start) = &active_now[0];
+
+        let active_almost_expired = layer.active(999.999);
+        let (_, fade_end) = &active_almost_expired[0];
 
         assert!((fade_start.opacity - 0.8).abs() < 1e-5);
         assert!(fade_end.opacity < 0.01);
@@ -414,13 +525,17 @@ mod tests {
             fade_power: 1.0,
             drift_amount: 0.0,
         });
-        let per_record = record(0.0).pixels.len();
+        let bytes_per_record = record(0.0).pixels.len();
 
         for i in 0..10 {
             layer.maybe_insert(record(i as f64));
         }
 
-        assert_eq!(layer.total_bytes(), per_record * 2, "bytes must stay bounded by capacity");
+        assert_eq!(
+            layer.total_bytes(),
+            bytes_per_record * 2,
+            "o total de bytes nunca deve passar de capacidade * tamanho de um registro"
+        );
     }
 
     #[test]
@@ -448,7 +563,16 @@ mod tests {
         memory.short.maybe_insert(record(2_000.0));
 
         let active = memory.collect_active(2_000.0);
-        let ages: Vec<f64> = active.iter().map(|r| r.age_ms).collect();
-        assert!(ages.windows(2).all(|w| w[0] >= w[1]), "expected descending age (oldest first): {:?}", ages);
+
+        let mut ages = Vec::new();
+        for r in &active {
+            ages.push(r.age_ms);
+        }
+
+        // A lista deve vir em ordem decrescente de idade: o mais antigo
+        // (idade maior) primeiro.
+        for i in 0..ages.len() - 1 {
+            assert!(ages[i] >= ages[i + 1], "esperava idades em ordem decrescente: {:?}", ages);
+        }
     }
 }
