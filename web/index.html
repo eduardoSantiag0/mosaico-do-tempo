@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="color-scheme" content="dark" />
+    <title>Mosaico do Tempo</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="stage"></canvas>
+
+      <section id="intro-screen" class="overlay">
+        <div class="intro-content">
+          <h1>Mosaico do Tempo</h1>
+          <p class="subtitle">Presenças que Permanecem</p>
+          <p class="description">
+            Autorize sua câmera frontal e observe seu reflexo ser atravessado
+            por versões anteriores de si mesmo. Movimentos deixam rastros; o
+            passado se sobrepõe ao presente até se dissolver.
+          </p>
+          <button id="start-button" type="button">Iniciar experiência</button>
+          <p class="hint">A imagem da câmera nunca sai do seu dispositivo.</p>
+        </div>
+      </section>
+
+      <section id="error-screen" class="overlay hidden">
+        <div class="intro-content">
+          <h2 id="error-title">Não foi possível acessar a câmera</h2>
+          <p id="error-message" class="description"></p>
+          <button id="retry-button" type="button">Tentar novamente</button>
+        </div>
+      </section>
+
+      <button id="exit-button" class="hidden" type="button" aria-label="Encerrar experiência">✕</button>
+
+      <aside id="debug-panel" class="hidden"></aside>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
