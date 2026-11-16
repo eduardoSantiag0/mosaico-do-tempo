@@ -10,6 +10,12 @@ export class Engine {
     [Symbol.dispose](): void;
     activeAgeMs(index: number): number;
     /**
+     * De 0.0 (registro recém-nascido) a 1.0 (no limite de idade da sua
+     * camada, quase desaparecendo). Usado para dar um ar mais
+     * "fantasmagórico" aos vestígios conforme eles envelhecem.
+     */
+    activeAgeRatio(index: number): number;
+    /**
      * Quantos registros estão ativos agora (depois da última chamada a
      * `update`). O `renderer.rs` usa isso para saber quantas vezes deve
      * desenhar um "eco" na tela.
@@ -113,6 +119,7 @@ export interface InitOutput {
     readonly __wbg_engine_free: (a: number, b: number) => void;
     readonly __wbg_renderer_free: (a: number, b: number) => void;
     readonly engine_activeAgeMs: (a: number, b: number) => number;
+    readonly engine_activeAgeRatio: (a: number, b: number) => number;
     readonly engine_activeCount: (a: number) => number;
     readonly engine_activeHeight: (a: number, b: number) => number;
     readonly engine_activeLayer: (a: number, b: number) => [number, number];
@@ -148,7 +155,7 @@ export interface InitOutput {
     readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___js_sys_b2e07bec349c6cad___Function_fn_wasm_bindgen_9e9d2b03fac4fd08___JsValue_____wasm_bindgen_9e9d2b03fac4fd08___sys__Undefined___js_sys_b2e07bec349c6cad___Function_fn_wasm_bindgen_9e9d2b03fac4fd08___JsValue_____wasm_bindgen_9e9d2b03fac4fd08___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__24: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__25: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;

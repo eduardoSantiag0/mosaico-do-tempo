@@ -95,5 +95,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let color = textureSample(quad_texture, quad_sampler, uv);
-    return vec4<f32>(color.rgb, color.a * alpha);
+
+    // Os ecos vão perdendo a cor conforme envelhecem, até ficarem em
+    // tons de cinza perto do fim da vida — um jeito simples de dar um
+    // ar mais "fantasmagórico" aos vestígios, em vez de parecerem só
+    // uma cópia atrasada e colorida do reflexo atual.
+    var rgb = color.rgb;
+    if (draw.is_live < 0.5) {
+        let luminance = dot(rgb, vec3<f32>(0.299, 0.587, 0.114));
+        let gray = vec3<f32>(luminance, luminance, luminance);
+        rgb = mix(rgb, gray, draw.age_ratio);
+    }
+
+    return vec4<f32>(rgb, color.a * alpha);
 }

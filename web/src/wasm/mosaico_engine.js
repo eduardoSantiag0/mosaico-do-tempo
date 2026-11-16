@@ -24,6 +24,17 @@ export class Engine {
         return ret;
     }
     /**
+     * De 0.0 (registro recém-nascido) a 1.0 (no limite de idade da sua
+     * camada, quase desaparecendo). Usado para dar um ar mais
+     * "fantasmagórico" aos vestígios conforme eles envelhecem.
+     * @param {number} index
+     * @returns {number}
+     */
+    activeAgeRatio(index) {
+        const ret = wasm.engine_activeAgeRatio(this.__wbg_ptr, index);
+        return ret;
+    }
+    /**
      * Quantos registros estão ativos agora (depois da última chamada a
      * `update`). O `renderer.rs` usa isso para saber quantas vezes deve
      * desenhar um "eco" na tela.
@@ -1874,18 +1885,18 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1743, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1745, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_);
             return ret;
         },
         __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 80, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 82, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_);
             return ret;
         },
         __wbindgen_generic_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 80, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__24);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 82, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__25);
             return ret;
         },
         __wbindgen_generic_0000000000000004: function(arg0) {
@@ -1952,8 +1963,8 @@ function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bin
     wasm.wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_(arg0, arg1, arg2);
 }
 
-function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__24(arg0, arg1, arg2) {
-    wasm.wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__24(arg0, arg1, arg2);
+function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__25(arg0, arg1, arg2) {
+    wasm.wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__25(arg0, arg1, arg2);
 }
 
 function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_(arg0, arg1, arg2) {

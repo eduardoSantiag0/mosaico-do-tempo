@@ -144,6 +144,17 @@ impl Engine {
         }
     }
 
+    /// De 0.0 (registro recém-nascido) a 1.0 (no limite de idade da sua
+    /// camada, quase desaparecendo). Usado para dar um ar mais
+    /// "fantasmagórico" aos vestígios conforme eles envelhecem.
+    #[wasm_bindgen(js_name = activeAgeRatio)]
+    pub fn active_age_ratio(&self, index: usize) -> f32 {
+        match self.active_cache.get(index) {
+            Some(r) => r.age_ratio,
+            None => 0.0,
+        }
+    }
+
     #[wasm_bindgen(js_name = activeOpacity)]
     pub fn active_opacity(&self, index: usize) -> f32 {
         match self.active_cache.get(index) {

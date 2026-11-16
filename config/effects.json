@@ -5,11 +5,11 @@
     "long": { "captureIntervalMs": 4000, "maxAgeMs": 120000, "capacity": 30, "baseWeight": 0.3, "fadePower": 2.4, "driftAmount": 0.06 }
   },
   "effects": {
-    "underwaterIntensity": 0.35,
+    "underwaterIntensity": 0.5,
     "underwaterFrequency": 2.2,
     "underwaterSpeed": 0.6,
-    "underwaterAmplitude": 0.015,
-    "dissolveFragmentation": 0.6,
+    "underwaterAmplitude": 0.02,
+    "dissolveFragmentation": 0.7,
     "additiveEchoes": false
   },
   "capture": {

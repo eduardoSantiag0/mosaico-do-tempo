@@ -4,6 +4,7 @@ export const memory: WebAssembly.Memory;
 export const __wbg_engine_free: (a: number, b: number) => void;
 export const __wbg_renderer_free: (a: number, b: number) => void;
 export const engine_activeAgeMs: (a: number, b: number) => number;
+export const engine_activeAgeRatio: (a: number, b: number) => number;
 export const engine_activeCount: (a: number) => number;
 export const engine_activeHeight: (a: number, b: number) => number;
 export const engine_activeLayer: (a: number, b: number) => [number, number];
@@ -39,7 +40,7 @@ export const wgpu_render_bundle_push_debug_group: (a: number, b: number) => void
 export const wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___js_sys_b2e07bec349c6cad___Function_fn_wasm_bindgen_9e9d2b03fac4fd08___JsValue_____wasm_bindgen_9e9d2b03fac4fd08___sys__Undefined___js_sys_b2e07bec349c6cad___Function_fn_wasm_bindgen_9e9d2b03fac4fd08___JsValue_____wasm_bindgen_9e9d2b03fac4fd08___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
 export const wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_: (a: number, b: number, c: any) => [number, number];
 export const wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_: (a: number, b: number, c: any) => void;
-export const wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__24: (a: number, b: number, c: any) => void;
+export const wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__25: (a: number, b: number, c: any) => void;
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_free: (a: number, b: number, c: number) => void;
