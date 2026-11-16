@@ -418,7 +418,10 @@ function drawEchoesCanvas2d(activeCount: number): void {
     // Os ecos vão perdendo a cor conforme envelhecem (mesmo efeito do
     // caminho GPU, feito em WGSL) — dá um ar mais "fantasmagórico" aos
     // vestígios em vez de parecerem só uma cópia atrasada e colorida.
-    const ageRatioPercent = Math.round(engine.activeAgeRatio(i) * 100);
+    // Multiplicamos por 2 para já ficarem bem cinza na metade da vida,
+    // enquanto ainda estão visíveis (perto do fim, a opacidade já caiu
+    // perto de zero e o cinza não seria notado).
+    const ageRatioPercent = Math.min(100, Math.round(engine.activeAgeRatio(i) * 200));
 
     ctx2d.save();
     ctx2d.globalAlpha = engine.activeOpacity(i);

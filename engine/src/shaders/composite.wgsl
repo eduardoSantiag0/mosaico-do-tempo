@@ -97,14 +97,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let color = textureSample(quad_texture, quad_sampler, uv);
 
     // Os ecos vão perdendo a cor conforme envelhecem, até ficarem em
-    // tons de cinza perto do fim da vida — um jeito simples de dar um
-    // ar mais "fantasmagórico" aos vestígios, em vez de parecerem só
-    // uma cópia atrasada e colorida do reflexo atual.
+    // tons de cinza — um jeito simples de dar um ar mais
+    // "fantasmagórico" aos vestígios, em vez de parecerem só uma cópia
+    // atrasada e colorida do reflexo atual.
+    //
+    // Importante: usamos `age_ratio * 2.0` (e não `age_ratio` puro) para
+    // que o eco já fique bem cinza na METADE da sua vida, enquanto ainda
+    // está bem visível. Se usássemos `age_ratio` direto, ele só ficaria
+    // visivelmente cinza perto do fim da vida — exatamente quando a
+    // opacidade (que também depende de `age_ratio`) já caiu perto de
+    // zero, e o efeito nunca chegaria a ser notado.
     var rgb = color.rgb;
     if (draw.is_live < 0.5) {
+        let gray_mix = clamp(draw.age_ratio * 2.0, 0.0, 1.0);
         let luminance = dot(rgb, vec3<f32>(0.299, 0.587, 0.114));
         let gray = vec3<f32>(luminance, luminance, luminance);
-        rgb = mix(rgb, gray, draw.age_ratio);
+        rgb = mix(rgb, gray, gray_mix);
     }
 
     return vec4<f32>(rgb, color.a * alpha);
