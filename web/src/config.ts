@@ -62,7 +62,7 @@ const FALLBACK_CONFIG: AppConfig = {
   capture: {
     memoryMaxDim: 96,
     memoryIntervalMs: 80,
-    liveMaxDim: 640,
+    liveMaxDim: 1280,
     segmentationMaxDim: 256,
     segmentationIntervalMs: 200,
   },
