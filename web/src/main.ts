@@ -2,13 +2,20 @@ import initEngine, { Engine, Renderer, engine_version } from "./wasm/mosaico_eng
 import { CameraController, CameraError } from "./camera.js";
 import { SegmentationService } from "./segmentation.js";
 import { UI } from "./ui.js";
+import { loadConfig, type AppConfig, type EffectsConfig, type MemoryLayerConfig } from "./config.js";
+import { DebugPanel } from "./debugPanel.js";
+import { PerformanceManager, QUALITY_SCALE, type QualityLevel } from "./performance.js";
 
 const canvas = required<HTMLCanvasElement>("#stage");
 
 const ui = new UI();
 const camera = new CameraController();
 const segmentation = new SegmentationService();
+const performanceManager = new PerformanceManager();
 let engine: Engine;
+let config: AppConfig;
+let currentEffects: EffectsConfig;
+let debugPanel: DebugPanel | null = null;
 
 // Se o navegador não tiver WebGPU nem WebGL2 suficiente, caímos de volta
 // para um desenho mais simples em Canvas 2D (RF: "fallback funcional para
@@ -19,42 +26,44 @@ let renderMode: RenderMode = "gpu";
 let gpuRenderer: Renderer | null = null;
 let ctx2d: CanvasRenderingContext2D | null = null;
 
-// Memory captures are taken at a low, fixed resolution — never the full
-// camera frame — to keep per-record cost small across up to ~120s of history.
-const CAPTURE_MAX_DIM = 96;
-const CAPTURE_INTERVAL_MS = 80;
+// Estes três offscreen canvases guardam, respectivamente: o quadro
+// reduzido usado para a memória temporal, o quadro (um pouco maior) usado
+// para o reflexo atual, e o quadro usado como entrada da segmentação.
+// Seus tamanhos são recalculados por `resizeCanvas()` a partir de
+// `config.capture`, ajustado pelo nível de qualidade atual (ver
+// performance.ts).
 const captureCanvas = document.createElement("canvas");
 const captureCtx = captureCanvas.getContext("2d", { willReadFrequently: true })!;
-const echoCanvas = document.createElement("canvas");
-const echoCtx = echoCanvas.getContext("2d")!;
-let lastCaptureMs = -Infinity;
-
-// The live reflection is captured at a higher resolution than memory
-// echoes (for sharpness), but still capped well below the full device
-// resolution to keep the CPU readback (getImageData) affordable every frame.
-const LIVE_MAX_DIM = 640;
 const liveCanvas = document.createElement("canvas");
 const liveCtx = liveCanvas.getContext("2d", { willReadFrequently: true })!;
-
-// A segmentação (RF04) roda num ritmo bem mais lento que a captura de
-// memória: o modelo de IA é pesado, e não precisamos de uma máscara nova
-// a cada quadro para o efeito funcionar bem.
-const SEGMENTATION_MAX_DIM = 256;
-const SEGMENTATION_INTERVAL_MS = 200;
 const segInputCanvas = document.createElement("canvas");
 const segInputCtx = segInputCanvas.getContext("2d", { willReadFrequently: true })!;
+const echoCanvas = document.createElement("canvas");
+const echoCtx = echoCanvas.getContext("2d")!;
+
+let lastCaptureMs = -Infinity;
 let lastSegmentationRequestMs = -Infinity;
+let effectiveMemoryIntervalMs = 80;
+let effectiveSegmentationIntervalMs = 200;
 
 let rafHandle = 0;
 let running = false;
 
 async function boot(): Promise<void> {
+  config = await loadConfig();
+  currentEffects = { ...config.effects };
+
   await initEngine();
   engine = new Engine();
   console.info(`[mosaico] engine wasm v${engine_version()} carregado`);
 
-  resizeCanvas();
+  applyQualityLevel(performanceManager.qualityLevel);
+  performanceManager.onQualityChange((level) => applyQualityLevel(level));
+
   await initRenderer();
+  applyEffectsToRenderer(currentEffects);
+
+  setupDebugPanel();
 
   ui.onStart(() => void startExperience());
   ui.onRetry(() => void startExperience());
@@ -86,6 +95,66 @@ async function initRenderer(): Promise<void> {
   }
 }
 
+function setupDebugPanel(): void {
+  if (!config.devPanel.enabled) return;
+
+  debugPanel = new DebugPanel(ui.debugPanel, currentEffects, (effects) => {
+    currentEffects = effects;
+    applyEffectsToRenderer(currentEffects);
+  });
+
+  // O painel fica escondido por padrão mesmo quando habilitado; a tecla
+  // "d" alterna sua visibilidade (RF09: "pode ser habilitado durante o
+  // desenvolvimento").
+  window.addEventListener("keydown", (event) => {
+    if (event.key.toLowerCase() !== "d") return;
+    const nowHidden = ui.debugPanel.classList.contains("hidden");
+    ui.setDebugVisible(nowHidden);
+  });
+}
+
+/** Aplica os parâmetros de RF06/RF07/RF08 ao renderer (sem efeito no fallback Canvas 2D). */
+function applyEffectsToRenderer(effects: EffectsConfig): void {
+  if (!gpuRenderer) return;
+  gpuRenderer.configureEffects(
+    effects.underwaterIntensity,
+    effects.underwaterFrequency,
+    effects.underwaterSpeed,
+    effects.underwaterAmplitude,
+    effects.dissolveFragmentation,
+  );
+  gpuRenderer.setAdditiveEchoes(effects.additiveEchoes);
+}
+
+/** Repassa a configuração de cada camada de memória (RF03) para o motor em Rust. */
+function applyMemoryLayerConfig(layer: MemoryLayerConfig, name: "short" | "intermediate" | "long", capacityScale: number): void {
+  const capacity = Math.max(4, Math.round(layer.capacity * capacityScale));
+  engine.configureLayer(name, capacity, layer.captureIntervalMs, layer.maxAgeMs, layer.baseWeight, layer.fadePower, layer.driftAmount);
+}
+
+/**
+ * Aplica um nível de qualidade (seção 9: "degradação progressiva"),
+ * recalculando resoluções de captura, frequência da segmentação e
+ * capacidade das camadas de memória a partir dos valores "base" de
+ * `config/effects.json`, multiplicados pelos fatores de `QUALITY_SCALE`.
+ */
+function applyQualityLevel(level: QualityLevel): void {
+  const scale = QUALITY_SCALE[level];
+
+  effectiveMemoryIntervalMs = config.capture.memoryIntervalMs;
+  effectiveSegmentationIntervalMs = Math.round(config.capture.segmentationIntervalMs * scale.segmentationInterval);
+
+  resizeCanvas();
+
+  applyMemoryLayerConfig(config.memory.short, "short", scale.capacity);
+  applyMemoryLayerConfig(config.memory.intermediate, "intermediate", scale.capacity);
+  applyMemoryLayerConfig(config.memory.long, "long", scale.capacity);
+
+  if (level !== "high") {
+    console.info(`[mosaico] qualidade reduzida para "${level}" (FPS baixo detectado)`);
+  }
+}
+
 async function startExperience(): Promise<void> {
   try {
     await camera.start();
@@ -103,7 +172,9 @@ function stopExperience(): void {
   pauseLoop();
   camera.stop();
   engine.reset();
+  performanceManager.reset();
   lastCaptureMs = -Infinity;
+  lastSegmentationRequestMs = -Infinity;
   ui.showScreen("intro");
 }
 
@@ -121,13 +192,14 @@ function pauseLoop(): void {
 function renderFrame(): void {
   if (!running) return;
   const now = performance.now();
+  performanceManager.recordFrame(now);
 
-  if (now - lastCaptureMs >= CAPTURE_INTERVAL_MS) {
+  if (now - lastCaptureMs >= effectiveMemoryIntervalMs) {
     captureIntoMemory(now);
     lastCaptureMs = now;
   }
 
-  if (now - lastSegmentationRequestMs >= SEGMENTATION_INTERVAL_MS) {
+  if (now - lastSegmentationRequestMs >= effectiveSegmentationIntervalMs) {
     requestSegmentation(now);
     lastSegmentationRequestMs = now;
   }
@@ -145,6 +217,14 @@ function renderFrame(): void {
     // reflexo precisa continuar aparecendo nos próximos quadros.
     console.error("[mosaico] erro ao desenhar o quadro:", err);
   }
+
+  debugPanel?.updateStats({
+    fps: performanceManager.fps,
+    totalMemoryBytes: engine.totalBytes(),
+    activeRecordCount: activeCount,
+    renderMode,
+    qualityLevel: performanceManager.qualityLevel,
+  });
 
   rafHandle = requestAnimationFrame(renderFrame);
 }
@@ -298,16 +378,17 @@ function resizeCanvas(): void {
   canvas.height = Math.round(rect.height * dpr);
 
   const aspect = canvas.width / canvas.height;
+  const scale = QUALITY_SCALE[performanceManager.qualityLevel].resolution;
 
-  const captureSize = downscaledSize(aspect, CAPTURE_MAX_DIM);
+  const captureSize = downscaledSize(aspect, Math.max(16, Math.round(config.capture.memoryMaxDim * scale)));
   captureCanvas.width = captureSize.width;
   captureCanvas.height = captureSize.height;
 
-  const liveSize = downscaledSize(aspect, LIVE_MAX_DIM);
+  const liveSize = downscaledSize(aspect, Math.max(64, Math.round(config.capture.liveMaxDim * scale)));
   liveCanvas.width = liveSize.width;
   liveCanvas.height = liveSize.height;
 
-  const segSize = downscaledSize(aspect, SEGMENTATION_MAX_DIM);
+  const segSize = downscaledSize(aspect, Math.max(32, Math.round(config.capture.segmentationMaxDim * scale)));
   segInputCanvas.width = segSize.width;
   segInputCanvas.height = segSize.height;
 }

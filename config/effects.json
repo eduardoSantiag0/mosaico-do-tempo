@@ -1,0 +1,25 @@
+{
+  "memory": {
+    "short": { "captureIntervalMs": 80, "maxAgeMs": 5000, "capacity": 48, "baseWeight": 0.9, "fadePower": 1.0, "driftAmount": 0.0 },
+    "intermediate": { "captureIntervalMs": 600, "maxAgeMs": 30000, "capacity": 50, "baseWeight": 0.55, "fadePower": 1.4, "driftAmount": 0.03 },
+    "long": { "captureIntervalMs": 4000, "maxAgeMs": 120000, "capacity": 30, "baseWeight": 0.3, "fadePower": 2.4, "driftAmount": 0.06 }
+  },
+  "effects": {
+    "underwaterIntensity": 0.35,
+    "underwaterFrequency": 2.2,
+    "underwaterSpeed": 0.6,
+    "underwaterAmplitude": 0.015,
+    "dissolveFragmentation": 0.6,
+    "additiveEchoes": false
+  },
+  "capture": {
+    "memoryMaxDim": 96,
+    "memoryIntervalMs": 80,
+    "liveMaxDim": 640,
+    "segmentationMaxDim": 256,
+    "segmentationIntervalMs": 200
+  },
+  "devPanel": {
+    "enabled": true
+  }
+}

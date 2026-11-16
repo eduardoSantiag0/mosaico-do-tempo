@@ -2,6 +2,7 @@ node_modules/
 dist/
 target/
 web/src/wasm/
+web/public/config/
 .DS_Store
 *.log
 web/tsconfig.tsbuildinfo

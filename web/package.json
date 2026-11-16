@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "wasm:build": "wasm-pack build ../engine --target web --out-dir ../web/src/wasm --out-name mosaico_engine --release",
-    "predev": "npm run wasm:build",
+    "config:sync": "node scripts/sync-config.mjs",
+    "predev": "npm run wasm:build && npm run config:sync",
     "dev": "vite",
     "dev:host": "vite --host",
-    "prebuild": "npm run wasm:build",
+    "prebuild": "npm run wasm:build && npm run config:sync",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },
