@@ -1,11 +1,13 @@
 import initEngine, { Engine, Renderer, engine_version } from "./wasm/mosaico_engine.js";
 import { CameraController, CameraError } from "./camera.js";
+import { SegmentationService } from "./segmentation.js";
 import { UI } from "./ui.js";
 
 const canvas = required<HTMLCanvasElement>("#stage");
 
 const ui = new UI();
 const camera = new CameraController();
+const segmentation = new SegmentationService();
 let engine: Engine;
 
 // Se o navegador não tiver WebGPU nem WebGL2 suficiente, caímos de volta
@@ -33,6 +35,15 @@ let lastCaptureMs = -Infinity;
 const LIVE_MAX_DIM = 640;
 const liveCanvas = document.createElement("canvas");
 const liveCtx = liveCanvas.getContext("2d", { willReadFrequently: true })!;
+
+// A segmentação (RF04) roda num ritmo bem mais lento que a captura de
+// memória: o modelo de IA é pesado, e não precisamos de uma máscara nova
+// a cada quadro para o efeito funcionar bem.
+const SEGMENTATION_MAX_DIM = 256;
+const SEGMENTATION_INTERVAL_MS = 200;
+const segInputCanvas = document.createElement("canvas");
+const segInputCtx = segInputCanvas.getContext("2d", { willReadFrequently: true })!;
+let lastSegmentationRequestMs = -Infinity;
 
 let rafHandle = 0;
 let running = false;
@@ -116,6 +127,11 @@ function renderFrame(): void {
     lastCaptureMs = now;
   }
 
+  if (now - lastSegmentationRequestMs >= SEGMENTATION_INTERVAL_MS) {
+    requestSegmentation(now);
+    lastSegmentationRequestMs = now;
+  }
+
   const activeCount = engine.update(now);
 
   try {
@@ -196,8 +212,50 @@ function captureIntoMemory(nowMs: number): void {
 
   drawCoverMirrored(video, captureCtx, captureCanvas.width, captureCanvas.height);
   const frame = captureCtx.getImageData(0, 0, captureCanvas.width, captureCanvas.height);
+
+  // Só os vestígios no passado (a memória) devem mostrar apenas a
+  // silhueta da pessoa (RF04); o reflexo atual continua mostrando tudo,
+  // como um espelho de verdade.
+  applySegmentationToAlpha(frame.data, frame.width, frame.height);
+
   const bytes = new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
   engine.insertFrame(nowMs, frame.width, frame.height, 1.0, bytes);
+}
+
+/**
+ * Sends the current (already-mirrored) frame to the segmentation worker,
+ * at its own, slower pace. The result only arrives later, asynchronously
+ * — this function never waits for it.
+ */
+function requestSegmentation(nowMs: number): void {
+  const { video } = camera;
+  if (video.videoWidth === 0) return;
+
+  drawCoverMirrored(video, segInputCtx, segInputCanvas.width, segInputCanvas.height);
+  segmentation.requestSegmentation(segInputCanvas, nowMs);
+}
+
+/**
+ * Multiplica o canal alfa de `pixels` pela máscara de segmentação mais
+ * recente (0.0 = fundo, 1.0 = pessoa). Se ainda não houver nenhuma
+ * máscara disponível (modelo carregando, por exemplo), não faz nada — a
+ * imagem continua com alfa cheio, exatamente como antes da Etapa 4
+ * (RF04: a aplicação deve continuar funcionando mesmo sem segmentação).
+ */
+function applySegmentationToAlpha(pixels: Uint8ClampedArray, width: number, height: number): void {
+  const mask = segmentation.getLatestMask();
+  if (!mask) return;
+
+  for (let y = 0; y < height; y++) {
+    const maskY = Math.min(mask.height - 1, Math.floor((y / height) * mask.height));
+    for (let x = 0; x < width; x++) {
+      const maskX = Math.min(mask.width - 1, Math.floor((x / width) * mask.width));
+      const confidence = mask.data[maskY * mask.width + maskX];
+
+      const pixelIndex = (y * width + x) * 4 + 3; // canal alfa (R,G,B,A)
+      pixels[pixelIndex] = Math.round(pixels[pixelIndex] * confidence);
+    }
+  }
 }
 
 /** Paints every active memory record, oldest first, beneath the live reflection (fallback path only). */
@@ -248,6 +306,10 @@ function resizeCanvas(): void {
   const liveSize = downscaledSize(aspect, LIVE_MAX_DIM);
   liveCanvas.width = liveSize.width;
   liveCanvas.height = liveSize.height;
+
+  const segSize = downscaledSize(aspect, SEGMENTATION_MAX_DIM);
+  segInputCanvas.width = segSize.width;
+  segInputCanvas.height = segSize.height;
 }
 
 function errorTitleFor(err: CameraError): string {
