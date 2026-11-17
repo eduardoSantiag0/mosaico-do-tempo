@@ -63,7 +63,7 @@ const FALLBACK_CONFIG: AppConfig = {
     intermediate: {
       captureIntervalMs: 650,
       maxAgeMs: 26000,
-      capacity: 40,
+      capacity: 14,
       baseWeight: 0.42,
       fadePower: 1.4,
       driftAmount: 0.025,
@@ -73,7 +73,7 @@ const FALLBACK_CONFIG: AppConfig = {
     long: {
       captureIntervalMs: 4500,
       maxAgeMs: 110000,
-      capacity: 22,
+      capacity: 8,
       baseWeight: 0.2,
       fadePower: 2.0,
       driftAmount: 0.05,
