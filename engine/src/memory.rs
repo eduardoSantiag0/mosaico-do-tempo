@@ -71,10 +71,26 @@ pub struct LayerConfig {
 }
 
 impl LayerConfig {
+    // Estes dois "_default()" só valem até `web/src/main.ts` chamar
+    // `engine.configureLayer(...)` com os valores de verdade, vindos de
+    // `config/effects.json` (isso acontece logo na inicialização, antes
+    // de qualquer quadro ser desenhado). Ainda assim, mantemos esses
+    // números iguais aos de `config/effects.json` de propósito — assim,
+    // quem só ler este arquivo não é enganado sobre a configuração real.
+    //
+    // Importante: `capacity * capture_interval_ms` deveria ficar perto
+    // de `max_age_ms`. Se a capacidade for pequena demais para o
+    // intervalo de captura, um registro é expulso do buffer circular
+    // (por falta de espaço) bem antes de a curva de fade (`compute_fade`)
+    // ter feito ele desbotar de verdade — ele "sai de cena" de repente,
+    // em vez de desaparecer suavemente. Isso já aconteceu aqui: ao
+    // reduzir só a capacidade (para desenhar menos ecos por quadro, veja
+    // `renderer.rs`), sem reduzir também o intervalo de captura, cada
+    // registro passou a ser expulso ainda bem visível.
     pub fn intermediate_default() -> Self {
         LayerConfig {
-            capacity: 40,
-            capture_interval_ms: 650.0,
+            capacity: 14,
+            capture_interval_ms: 1_857.0, // 14 * 1857 ≈ 26_000 = max_age_ms
             max_age_ms: 26_000.0,
             base_weight: 0.42,
             fade_power: 1.4,
@@ -86,8 +102,8 @@ impl LayerConfig {
 
     pub fn long_default() -> Self {
         LayerConfig {
-            capacity: 22,
-            capture_interval_ms: 4_500.0,
+            capacity: 8,
+            capture_interval_ms: 13_750.0, // 8 * 13750 = 110_000 = max_age_ms
             max_age_ms: 110_000.0,
             base_weight: 0.2,
             fade_power: 2.0,

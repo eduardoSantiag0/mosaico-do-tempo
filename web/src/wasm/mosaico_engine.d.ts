@@ -98,6 +98,13 @@ export class Renderer {
      */
     static create(canvas: HTMLCanvasElement, width: number, height: number): Promise<Renderer>;
     /**
+     * Quantos `queue.submit()` o último quadro desenhado fez. Útil para
+     * medir, num aparelho real, se a quantidade de ecos ativos está
+     * sobrecarregando a GPU — em vez de só estimar (ver README,
+     * "Correções de acumulação e robustez").
+     */
+    lastFrameSubmitCount(): number;
+    /**
      * Desenha um quadro completo. Ordem (de baixo para cima):
      *
      * 1. Atualiza o acumulador de rastro (desbota o antigo, soma a
@@ -176,6 +183,7 @@ export interface InitOutput {
     readonly renderer_backendName: (a: number) => [number, number];
     readonly renderer_configureEffects: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly renderer_create: (a: any, b: number, c: number) => any;
+    readonly renderer_lastFrameSubmitCount: (a: number) => number;
     readonly renderer_render: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number];
     readonly renderer_reset: (a: number) => void;
     readonly renderer_resize: (a: number, b: number, c: number) => void;
@@ -196,7 +204,7 @@ export interface InitOutput {
     readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___js_sys_b2e07bec349c6cad___Function_fn_wasm_bindgen_9e9d2b03fac4fd08___JsValue_____wasm_bindgen_9e9d2b03fac4fd08___sys__Undefined___js_sys_b2e07bec349c6cad___Function_fn_wasm_bindgen_9e9d2b03fac4fd08___JsValue_____wasm_bindgen_9e9d2b03fac4fd08___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__28: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__29: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;

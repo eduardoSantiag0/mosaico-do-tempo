@@ -271,6 +271,17 @@ export class Renderer {
         return ret;
     }
     /**
+     * Quantos `queue.submit()` o último quadro desenhado fez. Útil para
+     * medir, num aparelho real, se a quantidade de ecos ativos está
+     * sobrecarregando a GPU — em vez de só estimar (ver README,
+     * "Correções de acumulação e robustez").
+     * @returns {number}
+     */
+    lastFrameSubmitCount() {
+        const ret = wasm.renderer_lastFrameSubmitCount(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
      * Desenha um quadro completo. Ordem (de baixo para cima):
      *
      * 1. Atualiza o acumulador de rastro (desbota o antigo, soma a
@@ -1974,7 +1985,7 @@ function __wbg_get_imports() {
         },
         __wbindgen_generic_0000000000000003: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 82, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__28);
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__29);
             return ret;
         },
         __wbindgen_generic_0000000000000004: function(arg0) {
@@ -2041,8 +2052,8 @@ function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bin
     wasm.wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_(arg0, arg1, arg2);
 }
 
-function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__28(arg0, arg1, arg2) {
-    wasm.wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__28(arg0, arg1, arg2);
+function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__29(arg0, arg1, arg2) {
+    wasm.wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__29(arg0, arg1, arg2);
 }
 
 function wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_(arg0, arg1, arg2) {

@@ -61,7 +61,7 @@ export interface AppConfig {
 const FALLBACK_CONFIG: AppConfig = {
   memory: {
     intermediate: {
-      captureIntervalMs: 650,
+      captureIntervalMs: 1857,
       maxAgeMs: 26000,
       capacity: 14,
       baseWeight: 0.42,
@@ -71,7 +71,7 @@ const FALLBACK_CONFIG: AppConfig = {
       reappearanceFrequency: 0.0,
     },
     long: {
-      captureIntervalMs: 4500,
+      captureIntervalMs: 13750,
       maxAgeMs: 110000,
       capacity: 8,
       baseWeight: 0.2,

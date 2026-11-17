@@ -21,6 +21,8 @@ export interface DiagnosticsInfo {
   liveHeight: number;
   layerCounts: LayerCounts;
   segmentationReady: boolean;
+  /** `queue.submit()` por quadro no caminho GPU; `null` no fallback Canvas2D (não existe lá). */
+  submitCount: number | null;
 }
 
 /**
@@ -76,7 +78,8 @@ export class DebugPanel {
       `backend: ${info.backendName} · build: ${info.buildId} · ` +
       `reflexo: ${info.liveWidth}×${info.liveHeight} · ` +
       `memória intermediária: ${info.layerCounts.intermediate} · memória prolongada: ${info.layerCounts.long} · ` +
-      `segmentação: ${info.segmentationReady ? "pronta" : "carregando..."}`;
+      `segmentação: ${info.segmentationReady ? "pronta" : "carregando..."} · ` +
+      `submits/quadro: ${info.submitCount ?? "n/a (canvas2d)"}`;
   }
 
   private render(): void {

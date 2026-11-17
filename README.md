@@ -96,6 +96,15 @@ As duas flags de diagnóstico (magenta/distorção) funcionam nos dois caminhos 
 - Se a máscara de segmentação, vista na Visualização 1, está de fato alinhada com a pessoa (e não invertida ou desalinhada por algum motivo não previsto na análise estática).
 - A intensidade artística final percebida num celular real — todos os valores em `config/effects.json` são estimativas iniciais.
 
+## Revisão por agentes especializados (v5)
+
+Depois da redução de capacidade (v4), duas revisões independentes foram feitas por subagentes do Claude Code com personas dedicadas (`.claude/agents/artist.md` e `.claude/agents/code-reviewer.md` — reusáveis em sessões futuras):
+
+- **`code-reviewer`** confirmou `cargo test`/`cargo check`/`tsc` passando, achou uma inconsistência de documentação (este README dizia que o acumulador de rastro não era zerado ao fim da sessão — já tinha sido corrigido num commit anterior, só o texto ficou desatualizado) e uma inconsistência entre os defaults hardcoded em `memory.rs` e os valores reais de `config/effects.json`.
+- **`artist`** achou algo mais importante: a redução de capacidade (v4) quebrou a relação `capacity × captureIntervalMs ≈ maxAgeMs`, que antes era calibrada com cuidado (40×650≈26000; 22×4500≈99000, ambos próximos do `maxAgeMs` de cada camada). Reduzir só a `capacity` fez os registros serem **expulsos do buffer circular ainda bem visíveis** (~23% de opacidade na camada intermediária, ~9% na longa) em vez de desbotarem até quase zero como a curva de fade prevê — e, mais grave artisticamente, encolheu a duração *real* da memória prolongada de ~110s para só ~36s, diluindo a camada que devia representar a "duração longa" (Bergson/Tarkovsky).
+
+**Correção**: em vez de restaurar a capacidade antiga (o que traria de volta o custo de GPU), ajustamos `captureIntervalMs` para restaurar a proporção — `intermediate`: 650→1857ms (14×1857≈26000); `long`: 4500→13750ms (8×13750=110000). Isso preserva a duração artística original E o ganho de performance (menos ecos simultâneos), só reduzindo a densidade temporal das capturas. Os defaults em `memory.rs` foram atualizados para não ficarem desalinhados de novo, com um comentário explicando essa relação.
+
 ## Requisitos para desenvolver
 
 - [Rust](https://rustup.rs/) estável + target `wasm32-unknown-unknown` (`rustup target add wasm32-unknown-unknown`)
@@ -166,7 +175,7 @@ Este ambiente de desenvolvimento não tem um navegador real nem um celular conec
 - **Cores não passam por nenhuma conversão sRGB**: os bytes vêm direto do Canvas 2D do navegador. Deve estar visualmente correto na maioria dos casos, mas não houve verificação em tela real.
 - **Degradação de qualidade é só de mão única**: uma vez que o `PerformanceManager` reduz a qualidade, ela não volta a subir automaticamente na mesma sessão.
 - **Paleta de cores** ainda não tem um controle próprio — os efeitos atuais (deslocamento, dissolução, mistura aditiva) não incluem, por exemplo, uma função de tingimento de cor configurável.
-- **O acumulador de rastro (GPU) não é zerado quando a experiência termina.** Ele desbota muito rápido (meia-vida de menos de 1 segundo com os valores padrão), então na prática o próximo visitante não deve notar nenhum resíduo, mas, estritamente, o estado persiste no `Renderer` entre sessões em vez de ser limpo explicitamente como a memória discreta (`engine.reset()`).
+- ~~O acumulador de rastro (GPU) não é zerado quando a experiência termina.~~ Corrigido: `Renderer::reset()` (chamado em `stopExperience()`) já esvazia o acumulador de rastro, igual a `engine.reset()` faz com a memória discreta.
 
 ## Publicação na Vercel
 

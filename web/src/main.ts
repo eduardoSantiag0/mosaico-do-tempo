@@ -389,6 +389,7 @@ function updateDiagnosticsPanel(activeCount: number): void {
     liveHeight: liveCanvas.height,
     layerCounts: { intermediate: intermediateCount, long: longCount },
     segmentationReady: segmentation.isReady,
+    submitCount: renderMode === "gpu" ? gpuRenderer?.lastFrameSubmitCount() ?? null : null,
   });
 
   drawMaskPreview();

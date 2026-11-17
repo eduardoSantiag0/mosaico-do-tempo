@@ -242,6 +242,18 @@ pub struct Renderer {
     /// Flags do modo de diagnóstico (ver `?debug=true` no app web).
     debug_force_magenta: bool,
     debug_force_distortion: bool,
+    /// Quantos `queue.submit()` o último quadro fez (um por `draw_quad`).
+    /// É o jeito mais caro da nossa arquitetura atual (um buffer de
+    /// uniforms, um bind group e um submit novos por desenho — veja o
+    /// comentário em `draw_quad`), então é o número mais útil para medir
+    /// de verdade se um aparelho está sofrendo com isso, em vez de só
+    /// estimar. Visível no painel de diagnóstico (`?debug=true`).
+    ///
+    /// É um `Cell` (em vez de um campo comum) só para que `draw_quad`
+    /// (que recebe `&self`, não `&mut self`, para não precisar reescrever
+    /// todas as chamadas que já passam referências de campos de `self`
+    /// como argumento) consiga incrementar esse contador mesmo assim.
+    last_frame_submit_count: std::cell::Cell<u32>,
 }
 
 #[wasm_bindgen]
@@ -422,7 +434,17 @@ impl Renderer {
             backend_name,
             debug_force_magenta: false,
             debug_force_distortion: false,
+            last_frame_submit_count: std::cell::Cell::new(0),
         })
+    }
+
+    /// Quantos `queue.submit()` o último quadro desenhado fez. Útil para
+    /// medir, num aparelho real, se a quantidade de ecos ativos está
+    /// sobrecarregando a GPU — em vez de só estimar (ver README,
+    /// "Correções de acumulação e robustez").
+    #[wasm_bindgen(js_name = lastFrameSubmitCount)]
+    pub fn last_frame_submit_count(&self) -> u32 {
+        self.last_frame_submit_count.get()
     }
 
     /// Nome do backend gráfico realmente em uso ("webgpu", "gl", etc.).
@@ -548,6 +570,7 @@ impl Renderer {
         };
         let target_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        self.last_frame_submit_count.set(0);
         let time_seconds = (now_ms / 1000.0) as f32;
 
         // Quanto tempo (em segundos) passou desde o último quadro
@@ -760,6 +783,7 @@ impl Renderer {
             pass.draw(0..6, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
+        self.last_frame_submit_count.set(self.last_frame_submit_count.get() + 1);
     }
 }
 
