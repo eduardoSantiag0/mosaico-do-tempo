@@ -39,8 +39,21 @@ export function computeEngineSourceHash(engineDir) {
 
   const hash = createHash("sha256");
   for (const file of files) {
-    hash.update(relative(engineDir, file));
-    hash.update(readFileSync(file));
+    // Dois cuidados para o hash dar o MESMO resultado tanto no Windows
+    // (onde normalmente é gerado, rodando `npm run wasm:build`) quanto
+    // no Linux (onde a Vercel verifica, sem Rust instalado):
+    //
+    // 1. Caminhos: `relative()` usa `\` no Windows e `/` no Linux.
+    //    Sem normalizar, o hash nunca bateria entre os dois sistemas.
+    // 2. Quebras de linha: o git costuma fazer checkout dos arquivos
+    //    com CRLF no Windows e LF no Linux, mesmo sendo o "mesmo"
+    //    arquivo — então lemos como texto e normalizamos para LF antes
+    //    de calcular o hash, em vez de usar os bytes brutos do arquivo.
+    const relativePath = relative(engineDir, file).split(/[\\/]+/).join("/");
+    const normalizedContent = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+
+    hash.update(relativePath);
+    hash.update(normalizedContent);
   }
   return hash.digest("hex");
 }

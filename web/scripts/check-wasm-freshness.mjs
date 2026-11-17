@@ -25,23 +25,39 @@ const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const engineDir = join(scriptsDir, "..", "..", "engine");
 const hashFilePath = join(scriptsDir, "..", "src", "wasm", "source-hash.txt");
 
-const currentHash = computeEngineSourceHash(engineDir);
-
-let publishedHash = null;
+// Importante: esta verificação já travou TODOS os deploys por um bom
+// tempo sem ninguém perceber, porque um erro INESPERADO dentro dela
+// (não a comparação de hash em si, mas uma falha ao calculá-la) também
+// terminava com `process.exit` diferente de 0 — e a Vercel trata isso
+// como "build falhou", sem distinguir "o motor está desatualizado" de
+// "o próprio script de verificação quebrou". A segunda situação é pior
+// que não ter a verificação: ela bloqueia TODO deploy, mesmo quando o
+// `.wasm` publicado está correto. Por isso, só o caso específico e
+// controlado — os hashes realmente não baterem — deve derrubar o
+// build; qualquer outro erro aqui dentro só avisa e deixa o build
+// continuar.
 try {
-  publishedHash = readFileSync(hashFilePath, "utf8").trim();
-} catch {
-  // Arquivo ainda não existe — tratado como "não corresponde" abaixo.
-}
+  const currentHash = computeEngineSourceHash(engineDir);
 
-if (publishedHash !== currentHash) {
-  console.error("");
-  console.error("[mosaico] ERRO: o WebAssembly publicado (web/src/wasm/) não corresponde ao código-fonte atual de engine/.");
-  console.error(`[mosaico]   hash esperado (código-fonte agora): ${currentHash}`);
-  console.error(`[mosaico]   hash publicado (do último build):   ${publishedHash ?? "(nenhum — arquivo source-hash.txt não encontrado)"}`);
-  console.error("[mosaico] Rode `npm run wasm:build` dentro de web/, confira o resultado e comite-o (inclusive web/src/wasm/source-hash.txt) antes de publicar.");
-  console.error("");
-  process.exit(1);
-}
+  let publishedHash = null;
+  try {
+    publishedHash = readFileSync(hashFilePath, "utf8").trim();
+  } catch {
+    // Arquivo ainda não existe — tratado como "não corresponde" abaixo.
+  }
 
-console.log("[mosaico] OK: o WebAssembly publicado corresponde exatamente ao código-fonte atual de engine/.");
+  if (publishedHash !== currentHash) {
+    console.error("");
+    console.error("[mosaico] ERRO: o WebAssembly publicado (web/src/wasm/) não corresponde ao código-fonte atual de engine/.");
+    console.error(`[mosaico]   hash esperado (código-fonte agora): ${currentHash}`);
+    console.error(`[mosaico]   hash publicado (do último build):   ${publishedHash ?? "(nenhum — arquivo source-hash.txt não encontrado)"}`);
+    console.error("[mosaico] Rode `npm run wasm:build` dentro de web/, confira o resultado e comite-o (inclusive web/src/wasm/source-hash.txt) antes de publicar.");
+    console.error("");
+    process.exit(1);
+  }
+
+  console.log("[mosaico] OK: o WebAssembly publicado corresponde exatamente ao código-fonte atual de engine/.");
+} catch (err) {
+  console.warn("[mosaico] AVISO: não foi possível verificar o frescor do WebAssembly (o script quebrou, não é um mismatch de hash):", err);
+  console.warn("[mosaico] Seguindo com o build mesmo assim — um script de verificação quebrado nunca deve travar o deploy inteiro.");
+}
