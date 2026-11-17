@@ -111,6 +111,14 @@ Depois de testar no painel de debug, o valor de `effects.trailCaptureOpacity` va
 
 Também foi adicionado um **limitador de 60fps** no loop principal (`web/src/main.ts::renderFrame`, constante `TARGET_FRAME_INTERVAL_MS`): se `requestAnimationFrame` chamar antes de ~16,67ms terem passado desde o último quadro desenhado (acontece em celulares com tela de 90Hz/120Hz), o quadro é pulado sem fazer nenhum trabalho de captura/desenho, em vez de desenhar mais rápido que 60fps. Isso não muda nada em telas de 60Hz, mas em telas mais rápidas reduz o número total de `queue.submit()` por segundo — o mesmo gargalo identificado na seção anterior — sem perda perceptível de fluidez (o olho humano não distingue 60 de 90-120fps numa imagem como essa).
 
+## Correção do canal alfa do acumulador de rastro (v7)
+
+Uma auditoria conjunta (agentes Artista + Desenvolvedor) encontrou um bug crítico, confirmado por matemática de blend, não só por hipótese: o canal alfa das texturas intermediárias do acumulador de rastro (`trail_front`/`trail_back`) ficava travado em **1,0 em toda a tela**, a cada quadro.
+
+Causa: `draw_quad` limpava qualquer textura-alvo com `CLEAR_COLOR` (alfa 1,0, pensada para o framebuffer final, que é opaco de propósito) — inclusive `trail_back`, uma textura intermediária cujo canal alfa tem um significado próprio (quanto de presença recente existiu em cada ponto). A fórmula de mistura de alfa do `wgpu` (`BlendState::ALPHA_BLENDING`) é `resultado = src.a + dst.a×(1−src.a)`: com `dst.a` já em 1,0 (por causa da limpeza errada), o resultado dá sempre 1,0, **qualquer que fosse o conteúdo real**. Consequência dupla: (1) o campo de deslocamento temporal do reflexo atual, que lê esse canal esperando um valor localizado, recebia 1,0 constante — a distorção ficava uniforme e no máximo em toda a tela, em vez de só onde houve movimento recente; (2) o próprio rastro, desenhado por último, tinha alfa sempre 1,0, então **substituía** 100% da imagem desenhada por baixo em vez de se misturar com ela.
+
+Corrigido separando a cor de limpeza do framebuffer final (`CLEAR_COLOR`, opaca) da cor de limpeza de texturas intermediárias (`CLEAR_COLOR_TRANSPARENT`, nova constante em `renderer.rs`, alfa 0,0) — `draw_quad` agora recebe `Option<wgpu::Color>` em vez de um booleano, e quem chama escolhe a cor certa para o alvo. Nenhum teste automatizado cobria isso (`renderer.rs` só compila para `wasm32`, fora do alcance do `cargo test` nativo, e a validação WGSL só checa sintaxe, não configuração de blend) — por isso passou por 6 rodadas de revisão anteriores sem ser detectado. **Ainda não verificado visualmente num celular real** — é a próxima validação pendente, usando o painel `?debug=true` para comparar o comportamento antes/depois.
+
 ## Requisitos para desenvolver
 
 - [Rust](https://rustup.rs/) estável + target `wasm32-unknown-unknown` (`rustup target add wasm32-unknown-unknown`)

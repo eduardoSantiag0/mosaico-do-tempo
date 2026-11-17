@@ -42,13 +42,36 @@ use wgpu::util::DeviceExt;
 // Tamanho (em bytes) de um pixel RGBA (4 canais de 1 byte cada).
 const BYTES_PER_PIXEL: u32 = 4;
 
-// Cor de fundo usada para limpar a tela antes de desenhar qualquer
-// coisa. Um tom escuro, parecido com o fundo do restante da interface.
+// Cor de fundo usada para limpar a TELA (o framebuffer que o visitante
+// vê) antes de desenhar o reflexo atual. Um tom escuro, parecido com o
+// fundo do restante da interface. Opaca (alfa 1.0) de propósito: é a
+// camada mais ao fundo de todas, não existe nada "atrás" dela para
+// aparecer através de uma transparência.
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.02,
     g: 0.02,
     b: 0.04,
     a: 1.0,
+};
+
+// Cor usada para limpar TEXTURAS INTERMEDIÁRIAS (como `trail_back`,
+// dentro do acumulador de rastro) antes de desenhar algo nelas de
+// novo. Precisa ser TRANSPARENTE (alfa 0.0) — ao contrário de
+// `CLEAR_COLOR` — porque o canal alfa dessas texturas tem um
+// significado próprio: ele representa "quanto de presença recente
+// existiu aqui" (ver `apply_organic_displacement` em
+// `displacement.wgsl` e o modo DRAW_MODE_LIVE em `composite.wgsl`).
+// Usar `CLEAR_COLOR` (alfa 1.0) aqui foi um bug real: a fórmula de
+// mistura de alfa do `wgpu` é `resultado = src.a + dst.a*(1-src.a)`,
+// que dá exatamente 1.0 sempre que `dst.a` já é 1.0, qualquer que
+// seja `src.a` — então o acumulador de rastro ficava com o canal alfa
+// travado em 1.0 em toda a tela, a cada quadro, em vez de refletir só
+// onde houve movimento recente.
+const CLEAR_COLOR_TRANSPARENT: wgpu::Color = wgpu::Color {
+    r: 0.0,
+    g: 0.0,
+    b: 0.0,
+    a: 0.0,
 };
 
 /// Os "modos de desenho" que o shader entende — precisa corresponder
@@ -601,7 +624,7 @@ impl Renderer {
 
         let mut live_uniforms = make_uniforms(&self.effects, DRAW_MODE_LIVE, 1.0, 0.0, 0.0, 0.0, time_seconds);
         live_uniforms.debug_force_distortion = if self.debug_force_distortion { 1.0 } else { 0.0 };
-        self.draw_quad(&target_view, &self.live_texture.view, &self.trail_front.view, live_uniforms, false, true);
+        self.draw_quad(&target_view, &self.live_texture.view, &self.trail_front.view, live_uniforms, false, Some(CLEAR_COLOR));
 
         let active_count = engine.active_count();
         for index in 0..active_count {
@@ -630,14 +653,14 @@ impl Renderer {
                 )
             };
 
-            self.draw_quad(&target_view, &self.echo_texture.view, &self.trail_front.view, uniforms, self.additive_echoes, false);
+            self.draw_quad(&target_view, &self.echo_texture.view, &self.trail_front.view, uniforms, self.additive_echoes, None);
         }
 
         // O rastro de movimento recente vai por cima de tudo — é a
         // presença "mais viva" entre as memórias.
         let trail_draw_mode = if self.debug_force_magenta { DRAW_MODE_DEBUG_MAGENTA } else { DRAW_MODE_TRAIL };
         let trail_uniforms = make_uniforms(&self.effects, trail_draw_mode, 1.0, 0.0, 0.0, 0.0, time_seconds);
-        self.draw_quad(&target_view, &self.trail_front.view, &self.trail_front.view, trail_uniforms, false, false);
+        self.draw_quad(&target_view, &self.trail_front.view, &self.trail_front.view, trail_uniforms, false, None);
 
         frame.present();
         Ok(())
@@ -670,9 +693,19 @@ impl Renderer {
 
         if !is_first_render {
             // Passo 1: copia o rastro antigo para o novo buffer, já
-            // desbotado pelo fator de decaimento.
+            // desbotado pelo fator de decaimento. Limpa `trail_back`
+            // para TRANSPARENTE (não para `CLEAR_COLOR`, que é opaca —
+            // essa era a causa do bug do canal alfa travado em 1.0;
+            // ver o comentário de `CLEAR_COLOR_TRANSPARENT` acima).
             let decay_uniforms = make_uniforms(&self.effects, DRAW_MODE_PLAIN, decay_factor, 0.0, 0.0, 0.0, 0.0);
-            self.draw_quad(&self.trail_back.view, &self.trail_front.view, &self.trail_front.view, decay_uniforms, false, true);
+            self.draw_quad(
+                &self.trail_back.view,
+                &self.trail_front.view,
+                &self.trail_front.view,
+                decay_uniforms,
+                false,
+                Some(CLEAR_COLOR_TRANSPARENT),
+            );
         }
 
         // Passo 2: soma a captura nova por cima — MAS só se ela for
@@ -689,8 +722,9 @@ impl Renderer {
         if is_new_capture {
             self.trail_capture_texture.write_pixels(&self.queue, capture_rgba);
 
-            // `clear_before_drawing` só precisa ser `true` aqui quando
-            // pulamos o passo 1 (ou seja, no primeiro quadro de todos).
+            // Só precisamos limpar `trail_back` aqui quando pulamos o
+            // passo 1 (ou seja, no primeiro quadro de todos) — e, de
+            // novo, para TRANSPARENTE, nunca para `CLEAR_COLOR`.
             let capture_uniforms = make_uniforms(&self.effects, DRAW_MODE_PLAIN, self.effects.trail_capture_opacity, 0.0, 0.0, 0.0, 0.0);
             self.draw_quad(
                 &self.trail_back.view,
@@ -698,7 +732,7 @@ impl Renderer {
                 &self.trail_front.view,
                 capture_uniforms,
                 false,
-                is_first_render,
+                if is_first_render { Some(CLEAR_COLOR_TRANSPARENT) } else { None },
             );
 
             self.last_trail_capture_applied_ms = Some(capture_timestamp_ms);
@@ -721,7 +755,12 @@ impl Renderer {
         displacement_view: &wgpu::TextureView,
         uniforms: DrawUniforms,
         additive: bool,
-        clear_before_drawing: bool,
+        // `None` = não limpa, soma por cima do que já está no alvo.
+        // `Some(cor)` = limpa o alvo para `cor` antes de desenhar — a
+        // cor certa depende do alvo (ver `CLEAR_COLOR` vs.
+        // `CLEAR_COLOR_TRANSPARENT` acima), por isso quem chama decide,
+        // em vez deste método escolher uma cor fixa.
+        clear_color: Option<wgpu::Color>,
     ) {
         let uniform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("draw_uniforms"),
@@ -766,10 +805,9 @@ impl Renderer {
                     view: target_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: if clear_before_drawing {
-                            wgpu::LoadOp::Clear(CLEAR_COLOR)
-                        } else {
-                            wgpu::LoadOp::Load
+                        load: match clear_color {
+                            Some(color) => wgpu::LoadOp::Clear(color),
+                            None => wgpu::LoadOp::Load,
                         },
                         store: wgpu::StoreOp::Store,
                     },
