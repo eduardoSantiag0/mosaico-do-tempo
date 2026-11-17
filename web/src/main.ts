@@ -162,10 +162,15 @@ function setupDebugPanel(): void {
     },
   );
 
-  // Com `?debug=true`, o painel já começa visível (sem precisar de
-  // teclado — importante porque o celular não tem a tecla "d"). Do
-  // contrário, fica escondido por padrão, e a tecla "d" alterna.
-  ui.setDebugVisible(diagnosticsEnabled);
+  // Importante: NÃO mostramos o painel aqui, mesmo com `?debug=true`.
+  // O painel fica sobre uma faixa grande na parte de baixo da tela
+  // (bottom + até 40vh de altura, com z-index acima do resto) — se ele
+  // já aparecesse na tela inicial, cobriria o botão "Iniciar
+  // experiência" e o visitante nunca conseguiria tocar nele. Em vez
+  // disso, só mostramos o painel depois que a experiência já começou
+  // (ver `startExperience`), quando esse espaço não tem mais nenhum
+  // botão por baixo. Fora do modo de diagnóstico, continua escondido
+  // por padrão, e a tecla "d" alterna.
   window.addEventListener("keydown", (event) => {
     if (event.key.toLowerCase() !== "d") return;
     const nowHidden = ui.debugPanel.classList.contains("hidden");
@@ -247,6 +252,13 @@ async function startExperience(): Promise<void> {
   ui.showScreen("experience");
   resumeLoop();
 
+  // Só agora é seguro mostrar o painel de diagnóstico (`?debug=true`):
+  // na tela inicial, ele ficaria sobre o botão "Iniciar experiência" e
+  // bloquearia o clique (ver comentário em `setupDebugPanel`).
+  if (diagnosticsEnabled) {
+    ui.setDebugVisible(true);
+  }
+
   playbackWatchdogHandle = window.setTimeout(() => {
     const { video } = camera;
     const isActuallyPlaying = video.readyState >= video.HAVE_CURRENT_DATA && video.currentTime > 0;
@@ -275,6 +287,11 @@ function stopExperience(): void {
   lastAppliedTrailCaptureMs = null;
   trailAccumFrontCtx.clearRect(0, 0, trailAccumFront.width, trailAccumFront.height);
   trailAccumBackCtx.clearRect(0, 0, trailAccumBack.width, trailAccumBack.height);
+  // Esconde o painel de diagnóstico de novo: na tela inicial ele
+  // cobriria o botão "Iniciar experiência" (ver `startExperience`).
+  if (diagnosticsEnabled) {
+    ui.setDebugVisible(false);
+  }
   ui.showScreen("intro");
 }
 
