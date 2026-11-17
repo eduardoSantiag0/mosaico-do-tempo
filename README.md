@@ -105,6 +105,12 @@ Depois da redução de capacidade (v4), duas revisões independentes foram feita
 
 **Correção**: em vez de restaurar a capacidade antiga (o que traria de volta o custo de GPU), ajustamos `captureIntervalMs` para restaurar a proporção — `intermediate`: 650→1857ms (14×1857≈26000); `long`: 4500→13750ms (8×13750=110000). Isso preserva a duração artística original E o ganho de performance (menos ecos simultâneos), só reduzindo a densidade temporal das capturas. Os defaults em `memory.rs` foram atualizados para não ficarem desalinhados de novo, com um comentário explicando essa relação.
 
+## Ajuste de fluidez e opacidade do rastro (v6)
+
+Depois de testar no painel de debug, o valor de `effects.trailCaptureOpacity` validado e promovido a padrão foi **0.4** (era 0.8) — rastro mais sutil, "vestígio" em vez de cópia quase opaca.
+
+Também foi adicionado um **limitador de 60fps** no loop principal (`web/src/main.ts::renderFrame`, constante `TARGET_FRAME_INTERVAL_MS`): se `requestAnimationFrame` chamar antes de ~16,67ms terem passado desde o último quadro desenhado (acontece em celulares com tela de 90Hz/120Hz), o quadro é pulado sem fazer nenhum trabalho de captura/desenho, em vez de desenhar mais rápido que 60fps. Isso não muda nada em telas de 60Hz, mas em telas mais rápidas reduz o número total de `queue.submit()` por segundo — o mesmo gargalo identificado na seção anterior — sem perda perceptível de fluidez (o olho humano não distingue 60 de 90-120fps numa imagem como essa).
+
 ## Requisitos para desenvolver
 
 - [Rust](https://rustup.rs/) estável + target `wasm32-unknown-unknown` (`rustup target add wasm32-unknown-unknown`)

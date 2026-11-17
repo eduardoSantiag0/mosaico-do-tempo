@@ -93,7 +93,7 @@ const FALLBACK_CONFIG: AppConfig = {
     dissolveFragmentation: 0.55,
     additiveEchoes: false,
     trailDecayPerSecond: 1.5,
-    trailCaptureOpacity: 0.8,
+    trailCaptureOpacity: 0.4,
   },
   capture: {
     memoryMaxDim: 160,

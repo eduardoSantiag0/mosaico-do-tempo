@@ -82,6 +82,18 @@ let effectiveSegmentationIntervalMs = 200;
 let rafHandle = 0;
 let running = false;
 
+// Travamos o desenho em 60fps mesmo que `requestAnimationFrame` chame
+// mais rápido que isso (celulares com tela de 90Hz/120Hz chamariam a
+// cada ~11ms ou ~8ms). Sem o limite, nesses aparelhos desenhamos quadros
+// demais: cada quadro já custa vários `queue.submit()` (um por eco ativo
+// — ver `Renderer::lastFrameSubmitCount` no painel `?debug=true`), então
+// desenhar 90-120x/s em vez de 60x/s pode sobrecarregar a GPU/driver e
+// aparecer como instabilidade/flicker, sem ganhar fluidez perceptível
+// (olho humano não distingue isso). Em telas de 60Hz isto não muda nada
+// (o limite nunca chega a ser atingido).
+const TARGET_FRAME_INTERVAL_MS = 1000 / 60;
+let lastFrameRenderMs = -Infinity;
+
 async function boot(): Promise<void> {
   config = await loadConfig();
   currentEffects = { ...config.effects };
@@ -309,6 +321,17 @@ function pauseLoop(): void {
 function renderFrame(): void {
   if (!running) return;
   const now = performance.now();
+
+  // Limitador de 60fps: se o navegador chamou este quadro antes da hora
+  // (tela de alta taxa de atualização), só reagenda e sai, sem fazer
+  // nenhum trabalho de captura/desenho. Ver comentário de
+  // `TARGET_FRAME_INTERVAL_MS` acima.
+  if (now - lastFrameRenderMs < TARGET_FRAME_INTERVAL_MS) {
+    rafHandle = requestAnimationFrame(renderFrame);
+    return;
+  }
+  lastFrameRenderMs = now;
+
   performanceManager.recordFrame(now);
 
   if (now - lastCaptureMs >= effectiveMemoryIntervalMs) {

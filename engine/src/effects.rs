@@ -42,7 +42,7 @@ impl EffectConfig {
             displacement_amplitude: 0.018,
             dissolve_fragmentation: 0.55,
             trail_decay_per_second: 1.5,
-            trail_capture_opacity: 0.8,
+            trail_capture_opacity: 0.4,
         }
     }
 }
