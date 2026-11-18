@@ -2,7 +2,7 @@
 
 Instalação artística interativa: o visitante acessa pelo navegador do celular, autoriza a câmera frontal, e vê seu reflexo sendo atravessado por versões anteriores de si mesmo — rastros de movimento que se sobrepõem, se distorcem e se dissolvem com o tempo.
 
-Referências conceituais: Henri Bergson (duração e memória), Andrei Tarkovsky (tempo e composição, incluindo o mar de *Solaris*), Jacques Derrida (vestígio e ausência), *Deep Walls*. Essas referências também aparecem resumidas no próprio app, no botão "Filosofia por trás" da tela inicial.
+Referências conceituais: Henri Bergson (duração e memória), Andrei Tarkovsky (tempo e composição, incluindo o mar de *Solaris*), Jacques Derrida (vestígio e ausência), *Deep Walls*. O botão "Ideia do Projeto" na tela inicial do app traz o texto curatorial completo (focado na leitura de Tarkovsky sobre esculpir o tempo, e na questão central do mosaico como textura fluida em vez de fragmentos fixos).
 
 ## Arquitetura
 
