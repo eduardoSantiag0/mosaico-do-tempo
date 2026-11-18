@@ -37,6 +37,7 @@
     "trailCaptureOpacity": 0.4,
     "trailDeepDecayPerSecond": 0.006,
     "trailDeepCaptureOpacity": 0.18,
+    "trailDeepFloorAbsolute": 0.12,
     "trailDeepFloorRatio": 0.35,
     "trailOscillationPeriodSeconds": 30.0,
     "trailDisplacementFrequency": 0.7,

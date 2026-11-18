@@ -100,7 +100,8 @@ button {
 }
 
 #start-button,
-#retry-button {
+#retry-button,
+#philosophy-button {
   margin-top: 8px;
   padding: 14px 32px;
   border-radius: 999px;
@@ -113,20 +114,18 @@ button {
 }
 
 #start-button:active,
-#retry-button:active {
+#retry-button:active,
+#philosophy-button:active {
   transform: scale(0.97);
 }
 
-.link-button {
-  margin-top: 4px;
-  padding: 4px;
-  border: none;
-  background: none;
-  color: var(--muted);
-  font-size: 0.82rem;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  opacity: 0.8;
+/* Mesmo formato/tamanho do #start-button, mas com as cores invertidas
+   (contorno em vez de preenchido) — para ler como "ação secundária",
+   não como o botão principal, mas igualmente claro de clicar. */
+#philosophy-button {
+  background: transparent;
+  color: var(--fg);
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 .philosophy-content {

@@ -255,14 +255,15 @@ export class Renderer {
      * @param {number} trail_capture_opacity
      * @param {number} trail_deep_decay_per_second
      * @param {number} trail_deep_capture_opacity
+     * @param {number} trail_deep_floor_absolute
      * @param {number} trail_deep_floor_ratio
      * @param {number} trail_oscillation_period_seconds
      * @param {number} trail_displacement_frequency
      * @param {number} trail_displacement_speed
      * @param {number} trail_displacement_amplitude
      */
-    configureEffects(displacement_intensity, displacement_frequency, displacement_speed, displacement_amplitude, dissolve_fragmentation, echo_displacement_floor, trail_decay_per_second, trail_capture_opacity, trail_deep_decay_per_second, trail_deep_capture_opacity, trail_deep_floor_ratio, trail_oscillation_period_seconds, trail_displacement_frequency, trail_displacement_speed, trail_displacement_amplitude) {
-        wasm.renderer_configureEffects(this.__wbg_ptr, displacement_intensity, displacement_frequency, displacement_speed, displacement_amplitude, dissolve_fragmentation, echo_displacement_floor, trail_decay_per_second, trail_capture_opacity, trail_deep_decay_per_second, trail_deep_capture_opacity, trail_deep_floor_ratio, trail_oscillation_period_seconds, trail_displacement_frequency, trail_displacement_speed, trail_displacement_amplitude);
+    configureEffects(displacement_intensity, displacement_frequency, displacement_speed, displacement_amplitude, dissolve_fragmentation, echo_displacement_floor, trail_decay_per_second, trail_capture_opacity, trail_deep_decay_per_second, trail_deep_capture_opacity, trail_deep_floor_absolute, trail_deep_floor_ratio, trail_oscillation_period_seconds, trail_displacement_frequency, trail_displacement_speed, trail_displacement_amplitude) {
+        wasm.renderer_configureEffects(this.__wbg_ptr, displacement_intensity, displacement_frequency, displacement_speed, displacement_amplitude, dissolve_fragmentation, echo_displacement_floor, trail_decay_per_second, trail_capture_opacity, trail_deep_decay_per_second, trail_deep_capture_opacity, trail_deep_floor_absolute, trail_deep_floor_ratio, trail_oscillation_period_seconds, trail_displacement_frequency, trail_displacement_speed, trail_displacement_amplitude);
     }
     /**
      * Cria o Renderer. É uma função assíncrona porque pedir acesso à

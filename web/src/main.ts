@@ -206,6 +206,7 @@ function applyEffectsToRenderer(effects: EffectsConfig): void {
     effects.trailCaptureOpacity,
     effects.trailDeepDecayPerSecond,
     effects.trailDeepCaptureOpacity,
+    effects.trailDeepFloorAbsolute,
     effects.trailDeepFloorRatio,
     effects.trailOscillationPeriodSeconds,
     effects.trailDisplacementFrequency,

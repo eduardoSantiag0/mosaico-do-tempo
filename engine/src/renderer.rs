@@ -84,6 +84,13 @@ const DRAW_MODE_TRAIL: f32 = 3.0;
 /// só para provar, visualmente, que um eco/rastro chegou até o
 /// renderizador — nunca é usado na experiência "de verdade".
 const DRAW_MODE_DEBUG_MAGENTA: f32 = 4.0;
+/// Decaimento da camada PROFUNDA do rastro, com piso: igual ao modo
+/// "liso" (2.0), mas nunca deixa a opacidade de um ponto já tocado cair
+/// abaixo de `trail_deep_floor_absolute` — é isso que faz essa camada
+/// nunca desaparecer de verdade (ver `EffectConfig::trail_deep_floor_absolute`
+/// em `effects.rs`). Usado só no passo de decaimento da camada profunda,
+/// nunca na camada recente (essa precisa continuar podendo ir a zero).
+const DRAW_MODE_DEEP_DECAY: f32 = 5.0;
 
 /// Os valores que mandamos para a GPU antes de cada "quad" (retângulo)
 /// ser desenhado. Isso precisa corresponder EXATAMENTE à struct
@@ -116,6 +123,9 @@ struct DrawUniforms {
     /// e `trail_deep_floor_ratio` (`effects.rs`).
     trail_oscillation_period_seconds: f32,
     trail_deep_floor_ratio: f32,
+    /// Só usado no modo 5 (decaimento da camada profunda) — ver
+    /// `EffectConfig::trail_deep_floor_absolute` (`effects.rs`).
+    trail_deep_floor_absolute: f32,
     /// Modo de diagnóstico (ver seção "modo debug" no topo do arquivo):
     /// quando > 0.5, o reflexo atual (draw_mode == LIVE) usa uma
     /// distorção bem mais forte e sempre ligada, em vez da distorção
@@ -148,6 +158,7 @@ fn make_uniforms(effects: &EffectConfig, draw_mode: f32, opacity: f32, age_ratio
         trail_displacement_amplitude: effects.trail_displacement_amplitude,
         trail_oscillation_period_seconds: effects.trail_oscillation_period_seconds,
         trail_deep_floor_ratio: effects.trail_deep_floor_ratio,
+        trail_deep_floor_absolute: effects.trail_deep_floor_absolute,
         debug_force_distortion: 0.0,
     }
 }
@@ -572,6 +583,7 @@ impl Renderer {
         trail_capture_opacity: f32,
         trail_deep_decay_per_second: f32,
         trail_deep_capture_opacity: f32,
+        trail_deep_floor_absolute: f32,
         trail_deep_floor_ratio: f32,
         trail_oscillation_period_seconds: f32,
         trail_displacement_frequency: f32,
@@ -589,6 +601,7 @@ impl Renderer {
             trail_capture_opacity,
             trail_deep_decay_per_second,
             trail_deep_capture_opacity,
+            trail_deep_floor_absolute,
             trail_deep_floor_ratio,
             trail_oscillation_period_seconds,
             trail_displacement_frequency,
@@ -765,8 +778,11 @@ impl Renderer {
             );
 
             // Mesmo passo, para a camada profunda — desbotando bem mais
-            // devagar (`deep_decay_factor`).
-            let deep_decay_uniforms = make_uniforms(&self.effects, DRAW_MODE_PLAIN, deep_decay_factor, 0.0, 0.0, 0.0, 0.0);
+            // devagar (`deep_decay_factor`) e com um piso (modo 5, não o
+            // modo 2 "liso" comum): sem o piso, mesmo um decaimento bem
+            // lento continua tendendo a zero, só que mais devagar — não
+            // chega a "ficar indeterminadamente" de verdade.
+            let deep_decay_uniforms = make_uniforms(&self.effects, DRAW_MODE_DEEP_DECAY, deep_decay_factor, 0.0, 0.0, 0.0, 0.0);
             self.draw_quad(
                 &self.trail_deep_back.view,
                 &self.trail_deep_front.view,

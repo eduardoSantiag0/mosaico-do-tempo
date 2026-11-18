@@ -37,7 +37,9 @@ export interface EffectsConfig {
   trailDeepDecayPerSecond: number;
   /** Opacidade com que cada captura nova é somada à camada profunda. */
   trailDeepCaptureOpacity: number;
-  /** Fração mínima da camada profunda que a oscilação nunca cruza (ela nunca desaparece de verdade). */
+  /** Opacidade mínima ABSOLUTA que um ponto mantém para sempre, depois de receber presença uma vez — é isso que faz a camada nunca desaparecer de verdade. */
+  trailDeepFloorAbsolute: number;
+  /** Fração mínima (relativa ao valor atual, já com o piso acima) que a oscilação desce até, antes de voltar a subir. */
   trailDeepFloorRatio: number;
   /** Período (segundos) de um ciclo completo de "esmaecer e voltar" da camada profunda. */
   trailOscillationPeriodSeconds: number;
@@ -113,6 +115,7 @@ const FALLBACK_CONFIG: AppConfig = {
     trailCaptureOpacity: 0.4,
     trailDeepDecayPerSecond: 0.006,
     trailDeepCaptureOpacity: 0.18,
+    trailDeepFloorAbsolute: 0.12,
     trailDeepFloorRatio: 0.35,
     trailOscillationPeriodSeconds: 30.0,
     trailDisplacementFrequency: 0.7,

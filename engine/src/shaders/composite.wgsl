@@ -35,6 +35,12 @@
 // 4 = modo de diagnóstico ("eco forçado"): ignora a cor da textura e
 //     desenha magenta sólido, só para provar visualmente que o eco/
 //     rastro chegou até aqui. Nunca usado na experiência final.
+// 5 = decaimento da camada PROFUNDA do rastro: igual ao modo 2 ("liso"),
+//     mas com um piso — a opacidade de um ponto que já recebeu alguma
+//     presença nunca cai abaixo de `trail_deep_floor_absolute`. É isso
+//     que faz essa camada nunca desaparecer de verdade (um decaimento
+//     puramente exponencial, por mais lento que seja, sempre tende a
+//     zero). Usado só no passo de decaimento da camada profunda.
 struct DrawUniforms {
     offset_x: f32,
     offset_y: f32,
@@ -62,6 +68,8 @@ struct DrawUniforms {
     // Ver `solaris_swell` em `displacement.wgsl`.
     trail_oscillation_period_seconds: f32,
     trail_deep_floor_ratio: f32,
+    // Só usado no modo 5 — ver comentário do modo 5 acima.
+    trail_deep_floor_absolute: f32,
     // Modo de diagnóstico ("distorção forçada"): só tem efeito no modo 1
     // (reflexo atual). Quando > 0.5, força uma distorção forte e
     // constante, em vez da distorção sutil ligada à presença real no
@@ -224,6 +232,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (draw.draw_mode == 4.0) {
         let source_alpha = textureSample(quad_texture, quad_sampler, uv).a;
         return vec4<f32>(1.0, 0.0, 1.0, source_alpha * alpha);
+    }
+
+    // Modo 5 — decaimento da camada profunda do rastro, com piso. `alpha`
+    // aqui é o fator de decaimento (ver `draw.opacity` no topo da função),
+    // já aplicado pela GPU através do blend normal (ALPHA_BLENDING) —
+    // então `color.a * alpha` já É o valor decaído deste quadro. Um
+    // ponto que nunca recebeu presença tem `color.a` exatamente 0.0 (a
+    // textura começa limpa e transparente, e só muda onde algo foi
+    // desenhado) — por isso o piso só "pega" em quem já foi tocado.
+    if (draw.draw_mode == 5.0) {
+        let color = textureSample(quad_texture, quad_sampler, uv);
+        var decayed_alpha = color.a * alpha;
+        if (color.a > 0.0) {
+            decayed_alpha = max(decayed_alpha, draw.trail_deep_floor_absolute);
+        }
+        return vec4<f32>(color.rgb, decayed_alpha);
     }
 
     // Modo 2 — "liso" (atualização interna do acumulador de rastro):

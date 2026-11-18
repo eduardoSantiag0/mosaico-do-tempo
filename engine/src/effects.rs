@@ -61,12 +61,23 @@ pub struct EffectConfig {
     /// mais "surda"/discreta que a presença viva ou o rastro recente —
     /// ela é memória, não presença.
     pub trail_deep_capture_opacity: f32,
-    /// Fração MÍNIMA da camada profunda que a oscilação (ver
-    /// `trail_oscillation_period_seconds`) nunca cruza — por isso ela
-    /// nunca desaparece de verdade, só fica mais fraca. É relativa ao
-    /// próprio valor já desbotado da camada, não um valor somado à
-    /// tela inteira — então um lugar que nunca teve presença continua
-    /// em zero (não cria uma névoa uniforme sobre tudo).
+    /// A opacidade MÍNIMA ABSOLUTA que um ponto da tela mantém para
+    /// sempre, depois de ter recebido qualquer presença pelo menos uma
+    /// vez — este é o piso que faz "o passado nunca se apaga de
+    /// verdade". Um decaimento puramente exponencial (como
+    /// `trail_deep_decay_per_second` sozinho produziria) sempre tende a
+    /// zero, só mais devagar — nunca "fica indeterminadamente"; por
+    /// isso o decaimento da camada profunda (`renderer.rs`, modo de
+    /// desenho 5 em `composite.wgsl`) para de diminuir assim que chega
+    /// aqui. Um ponto que NUNCA recebeu presença continua em zero (o
+    /// piso só vale para quem já foi "tocado" pelo menos uma vez) —
+    /// não cria uma névoa uniforme sobre a tela inteira.
+    pub trail_deep_floor_absolute: f32,
+    /// Fração MÍNIMA (relativa ao valor atual, já com o piso acima
+    /// aplicado) que a oscilação (ver `trail_oscillation_period_seconds`)
+    /// desce até, antes de voltar a subir — o "respirar" de aparecer e
+    /// desaparecer por cima da presença residual, que essa já nunca é
+    /// zero.
     pub trail_deep_floor_ratio: f32,
     /// Período (em segundos) de um ciclo completo de "esmaecer e
     /// voltar" da camada profunda. A fase desse ciclo varia de lugar
@@ -114,6 +125,10 @@ impl EffectConfig {
             // antigas, sem saturar a tela num dia inteiro de uso.
             trail_deep_decay_per_second: 0.006,
             trail_deep_capture_opacity: 0.18,
+            // Um pouco abaixo de trail_deep_capture_opacity: um lugar
+            // tocado uma vez fica, para sempre, um pouco mais fraco que
+            // no instante em que foi tocado, mas nunca chega a zero.
+            trail_deep_floor_absolute: 0.12,
             trail_deep_floor_ratio: 0.35,
             trail_oscillation_period_seconds: 30.0,
 

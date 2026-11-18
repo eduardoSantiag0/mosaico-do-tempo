@@ -126,7 +126,11 @@ export class DebugPanel {
       this.effects.trailDeepCaptureOpacity = v;
       this.emit();
     });
-    this.addSlider("Rastro profundo: piso (nunca apaga)", 0, 1, 0.01, this.effects.trailDeepFloorRatio, (v) => {
+    this.addSlider("Rastro profundo: piso absoluto (nunca apaga)", 0, 0.4, 0.005, this.effects.trailDeepFloorAbsolute, (v) => {
+      this.effects.trailDeepFloorAbsolute = v;
+      this.emit();
+    });
+    this.addSlider("Rastro profundo: piso da oscilação", 0, 1, 0.01, this.effects.trailDeepFloorRatio, (v) => {
       this.effects.trailDeepFloorRatio = v;
       this.emit();
     });
