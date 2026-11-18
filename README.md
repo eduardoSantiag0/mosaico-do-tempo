@@ -119,6 +119,13 @@ Causa: `draw_quad` limpava qualquer textura-alvo com `CLEAR_COLOR` (alfa 1,0, pe
 
 Corrigido separando a cor de limpeza do framebuffer final (`CLEAR_COLOR`, opaca) da cor de limpeza de texturas intermediárias (`CLEAR_COLOR_TRANSPARENT`, nova constante em `renderer.rs`, alfa 0,0) — `draw_quad` agora recebe `Option<wgpu::Color>` em vez de um booleano, e quem chama escolhe a cor certa para o alvo. Nenhum teste automatizado cobria isso (`renderer.rs` só compila para `wasm32`, fora do alcance do `cargo test` nativo, e a validação WGSL só checa sintaxe, não configuração de blend) — por isso passou por 6 rodadas de revisão anteriores sem ser detectado. **Ainda não verificado visualmente num celular real** — é a próxima validação pendente, usando o painel `?debug=true` para comparar o comportamento antes/depois.
 
+## Textura líquida nos ecos e rastro mais longo (v8)
+
+Dois ajustes artísticos pedidos depois da correção do bug do canal alfa (v7):
+
+- **Ecos com "textura líquida"**: antes, a força do campo de deslocamento num eco era exatamente sua idade (`strength = age_ratio`) — um eco recém-nascido tinha força 0, ou seja, nascia sem nenhuma ondulação, idêntico ao reflexo vivo, e só ia "ficando líquido" conforme envelhecia. Novo parâmetro `effects.echoDisplacementFloor` (padrão `0.45`) define uma força mínima: a força real usada agora é `mix(echoDisplacementFloor, 1.0, age_ratio)` (`composite.wgsl`, modo 0). Todo eco já nasce com uma ondulação visível, que ainda cresce com a idade. Isso também ataca, de outro ângulo, o problema (já mapeado na auditoria v6) de ecos recém-capturados serem quase indistinguíveis do reflexo vivo.
+- **Rastro mais persistente**: `effects.trailDecayPerSecond` reduzido de `1.5` para `0.4` (meia-vida de ~0,46s para ~1,7s) — o vestígio de movimento recente agora leva bem mais tempo para desbotar depois que o participante para. Como o bug do canal alfa (v7) já estava corrigido antes deste ajuste, aumentar a persistência do rastro não reintroduz o problema de "a tela fica dominada pelo rastro" que a auditoria tinha identificado como risco de fazer essa mudança fora de ordem.
+
 ## Requisitos para desenvolver
 
 - [Rust](https://rustup.rs/) estável + target `wasm32-unknown-unknown` (`rustup target add wasm32-unknown-unknown`)

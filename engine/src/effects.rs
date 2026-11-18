@@ -24,6 +24,15 @@ pub struct EffectConfig {
     /// O quanto os vestígios antigos se "fragmentam" (em pedacinhos)
     /// conforme desaparecem. 0.0 = desaparecem de forma lisa/uniforme.
     pub dissolve_fragmentation: f32,
+    /// A força MÍNIMA do campo de deslocamento aplicado a um eco, mesmo
+    /// recém-nascido (idade 0). Sem isso, um eco começa com deslocamento
+    /// zero (força = idade) e só vai ganhando essa "ondulação líquida"
+    /// conforme envelhece — então, por um tempo, ele fica quase idêntico
+    /// ao reflexo vivo. Com um piso aqui, todo eco já nasce com uma
+    /// textura meio líquida, e ainda fica mais forte conforme envelhece
+    /// (a força real usada é `mix(echo_displacement_floor, 1.0, idade)`).
+    /// 0.0 = comportamento antigo (só a idade controla a força).
+    pub echo_displacement_floor: f32,
     /// O quanto o acumulador de rastro (memória curta) "esquece" por
     /// segundo. Valores maiores fazem o rastro desbotar mais rápido.
     /// É uma taxa contínua (estilo "meia-vida"), não uma duração fixa.
@@ -41,7 +50,10 @@ impl EffectConfig {
             displacement_speed: 0.45,
             displacement_amplitude: 0.018,
             dissolve_fragmentation: 0.55,
-            trail_decay_per_second: 1.5,
+            echo_displacement_floor: 0.45,
+            // Meia-vida ~1,7s (era 1,5/s, meia-vida ~0,46s) — rastro
+            // visível por mais tempo depois que o movimento para.
+            trail_decay_per_second: 0.4,
             trail_capture_opacity: 0.4,
         }
     }

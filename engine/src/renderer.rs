@@ -103,6 +103,10 @@ struct DrawUniforms {
     displacement_speed: f32,
     displacement_amplitude: f32,
     dissolve_fragmentation: f32,
+    /// Só usado no modo 0 (eco): a força mínima do deslocamento, mesmo
+    /// num eco recém-nascido. Ver comentário completo em
+    /// `EffectConfig::echo_displacement_floor` (`effects.rs`).
+    echo_displacement_floor: f32,
     /// Modo de diagnóstico (ver seção "modo debug" no topo do arquivo):
     /// quando > 0.5, o reflexo atual (draw_mode == LIVE) usa uma
     /// distorção bem mais forte e sempre ligada, em vez da distorção
@@ -129,6 +133,7 @@ fn make_uniforms(effects: &EffectConfig, draw_mode: f32, opacity: f32, age_ratio
         displacement_speed: effects.displacement_speed,
         displacement_amplitude: effects.displacement_amplitude,
         dissolve_fragmentation: effects.dissolve_fragmentation,
+        echo_displacement_floor: effects.echo_displacement_floor,
         debug_force_distortion: 0.0,
     }
 }
@@ -534,6 +539,7 @@ impl Renderer {
         displacement_speed: f32,
         displacement_amplitude: f32,
         dissolve_fragmentation: f32,
+        echo_displacement_floor: f32,
         trail_decay_per_second: f32,
         trail_capture_opacity: f32,
     ) {
@@ -543,6 +549,7 @@ impl Renderer {
             displacement_speed,
             displacement_amplitude,
             dissolve_fragmentation,
+            echo_displacement_floor,
             trail_decay_per_second,
             trail_capture_opacity,
         };

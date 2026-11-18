@@ -250,11 +250,12 @@ export class Renderer {
      * @param {number} displacement_speed
      * @param {number} displacement_amplitude
      * @param {number} dissolve_fragmentation
+     * @param {number} echo_displacement_floor
      * @param {number} trail_decay_per_second
      * @param {number} trail_capture_opacity
      */
-    configureEffects(displacement_intensity, displacement_frequency, displacement_speed, displacement_amplitude, dissolve_fragmentation, trail_decay_per_second, trail_capture_opacity) {
-        wasm.renderer_configureEffects(this.__wbg_ptr, displacement_intensity, displacement_frequency, displacement_speed, displacement_amplitude, dissolve_fragmentation, trail_decay_per_second, trail_capture_opacity);
+    configureEffects(displacement_intensity, displacement_frequency, displacement_speed, displacement_amplitude, dissolve_fragmentation, echo_displacement_floor, trail_decay_per_second, trail_capture_opacity) {
+        wasm.renderer_configureEffects(this.__wbg_ptr, displacement_intensity, displacement_frequency, displacement_speed, displacement_amplitude, dissolve_fragmentation, echo_displacement_floor, trail_decay_per_second, trail_capture_opacity);
     }
     /**
      * Cria o Renderer. É uma função assíncrona porque pedir acesso à

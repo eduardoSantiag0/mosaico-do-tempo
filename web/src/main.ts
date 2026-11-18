@@ -199,6 +199,7 @@ function applyEffectsToRenderer(effects: EffectsConfig): void {
     effects.displacementSpeed,
     effects.displacementAmplitude,
     effects.dissolveFragmentation,
+    effects.echoDisplacementFloor,
     effects.trailDecayPerSecond,
     effects.trailCaptureOpacity,
   );

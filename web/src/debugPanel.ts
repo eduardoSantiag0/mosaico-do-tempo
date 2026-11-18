@@ -106,6 +106,10 @@ export class DebugPanel {
       this.effects.dissolveFragmentation = v;
       this.emit();
     });
+    this.addSlider("Eco: deslocamento mínimo (líquido)", 0, 1, 0.01, this.effects.echoDisplacementFloor, (v) => {
+      this.effects.echoDisplacementFloor = v;
+      this.emit();
+    });
     this.addSlider("Rastro: decaimento/s", 0, 4, 0.05, this.effects.trailDecayPerSecond, (v) => {
       this.effects.trailDecayPerSecond = v;
       this.emit();

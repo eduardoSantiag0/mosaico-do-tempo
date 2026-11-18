@@ -41,6 +41,11 @@ struct DrawUniforms {
     displacement_speed: f32,
     displacement_amplitude: f32,
     dissolve_fragmentation: f32,
+    // Só usado no modo 0 (eco): a força mínima do campo de
+    // deslocamento, mesmo para um eco recém-nascido (idade 0). Sem
+    // isso, um eco nasce sem nenhuma distorção (força = idade) e só
+    // ganha essa "textura líquida" conforme envelhece.
+    echo_displacement_floor: f32,
     // Modo de diagnóstico ("distorção forçada"): só tem efeito no modo 1
     // (reflexo atual). Quando > 0.5, força uma distorção forte e
     // constante, em vez da distorção sutil ligada à presença real no
@@ -107,10 +112,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Modo 0 — eco (memória intermediária/prolongada).
     if (draw.draw_mode == 0.0) {
+        // A força do deslocamento nunca é menor que `echo_displacement_floor`
+        // — assim, até um eco recém-nascido já tem uma leve "ondulação
+        // líquida", em vez de nascer idêntico ao reflexo vivo e só
+        // ganhar textura conforme envelhece.
+        let liquid_strength = mix(draw.echo_displacement_floor, 1.0, draw.age_ratio);
         uv = apply_organic_displacement(
             uv, draw.time_seconds, draw.displacement_intensity,
             draw.displacement_frequency, draw.displacement_speed, draw.displacement_amplitude,
-            draw.age_ratio,
+            liquid_strength,
         );
         alpha = alpha * dissolve_mask(in.uv, draw.age_ratio, draw.dissolve_fragmentation);
 

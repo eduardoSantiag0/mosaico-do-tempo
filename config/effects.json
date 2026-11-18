@@ -31,8 +31,9 @@
     "displacementSpeed": 0.45,
     "displacementAmplitude": 0.018,
     "dissolveFragmentation": 0.55,
+    "echoDisplacementFloor": 0.45,
     "additiveEchoes": false,
-    "trailDecayPerSecond": 1.5,
+    "trailDecayPerSecond": 0.4,
     "trailCaptureOpacity": 0.4
   },
   "capture": {

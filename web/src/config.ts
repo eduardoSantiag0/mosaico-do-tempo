@@ -26,6 +26,8 @@ export interface EffectsConfig {
   displacementSpeed: number;
   displacementAmplitude: number;
   dissolveFragmentation: number;
+  /** Força mínima do deslocamento aplicado a um eco, mesmo recém-nascido (0 = idade controla tudo). */
+  echoDisplacementFloor: number;
   additiveEchoes: boolean;
   /** O quanto o acumulador de rastro "esquece" por segundo. */
   trailDecayPerSecond: number;
@@ -91,8 +93,9 @@ const FALLBACK_CONFIG: AppConfig = {
     displacementSpeed: 0.45,
     displacementAmplitude: 0.018,
     dissolveFragmentation: 0.55,
+    echoDisplacementFloor: 0.45,
     additiveEchoes: false,
-    trailDecayPerSecond: 1.5,
+    trailDecayPerSecond: 0.4,
     trailCaptureOpacity: 0.4,
   },
   capture: {
