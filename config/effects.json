@@ -34,7 +34,14 @@
     "echoDisplacementFloor": 0.45,
     "additiveEchoes": false,
     "trailDecayPerSecond": 0.4,
-    "trailCaptureOpacity": 0.4
+    "trailCaptureOpacity": 0.4,
+    "trailDeepDecayPerSecond": 0.006,
+    "trailDeepCaptureOpacity": 0.18,
+    "trailDeepFloorRatio": 0.35,
+    "trailOscillationPeriodSeconds": 30.0,
+    "trailDisplacementFrequency": 0.7,
+    "trailDisplacementSpeed": 0.12,
+    "trailDisplacementAmplitude": 0.045
   },
   "capture": {
     "memoryMaxDim": 160,

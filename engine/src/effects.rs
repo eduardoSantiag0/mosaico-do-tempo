@@ -33,13 +33,66 @@ pub struct EffectConfig {
     /// (a força real usada é `mix(echo_displacement_floor, 1.0, idade)`).
     /// 0.0 = comportamento antigo (só a idade controla a força).
     pub echo_displacement_floor: f32,
-    /// O quanto o acumulador de rastro (memória curta) "esquece" por
-    /// segundo. Valores maiores fazem o rastro desbotar mais rápido.
-    /// É uma taxa contínua (estilo "meia-vida"), não uma duração fixa.
+    /// O quanto o acumulador de rastro RECENTE (a camada "rápida", que
+    /// reage a movimento novo) "esquece" por segundo. Valores maiores
+    /// fazem esse rastro desbotar mais rápido. É uma taxa contínua
+    /// (estilo "meia-vida"), não uma duração fixa.
     pub trail_decay_per_second: f32,
     /// Opacidade com que cada captura nova é somada ao acumulador de
-    /// rastro, antes de começar a desbotar.
+    /// rastro recente, antes de começar a desbotar.
     pub trail_capture_opacity: f32,
+
+    // --- Rastro PROFUNDO ("mar de Solaris") ---
+    //
+    // Além do rastro recente acima, existe uma segunda camada,
+    // profunda, que guarda a mesma captura mas desbota MUITO mais
+    // lentamente e nunca chega a realmente zerar: ela oscila entre um
+    // piso mínimo de visibilidade e totalmente visível, "aparecendo e
+    // desaparecendo" em vez de só desbotar — a ideia de que o passado
+    // nunca se apaga de verdade, só se afasta e volta. Ver
+    // `renderer.rs::update_trail_accumulator` e o modo de desenho 3 em
+    // `composite.wgsl`.
+    /// Taxa de esquecimento da camada PROFUNDA — bem menor que
+    /// `trail_decay_per_second`, de propósito (meia-vida de minutos,
+    /// não de segundos).
+    pub trail_deep_decay_per_second: f32,
+    /// Opacidade com que cada captura nova é somada à camada profunda.
+    /// Menor que `trail_capture_opacity`: a camada profunda é sempre
+    /// mais "surda"/discreta que a presença viva ou o rastro recente —
+    /// ela é memória, não presença.
+    pub trail_deep_capture_opacity: f32,
+    /// Fração MÍNIMA da camada profunda que a oscilação (ver
+    /// `trail_oscillation_period_seconds`) nunca cruza — por isso ela
+    /// nunca desaparece de verdade, só fica mais fraca. É relativa ao
+    /// próprio valor já desbotado da camada, não um valor somado à
+    /// tela inteira — então um lugar que nunca teve presença continua
+    /// em zero (não cria uma névoa uniforme sobre tudo).
+    pub trail_deep_floor_ratio: f32,
+    /// Período (em segundos) de um ciclo completo de "esmaecer e
+    /// voltar" da camada profunda. A fase desse ciclo varia de lugar
+    /// para lugar na tela (ver `solaris_swell` em `displacement.wgsl`),
+    /// para não parecer um flash sincronizado cobrindo a tela toda.
+    pub trail_oscillation_period_seconds: f32,
+
+    // --- Distorção "mar de Solaris", só para o rastro (modo 3) ---
+    //
+    // O reflexo vivo e os ecos continuam usando `displacement_frequency`/
+    // `displacement_speed`/`displacement_amplitude` acima (campo
+    // "orgânico" sutil, pensado para não comprometer legibilidade). O
+    // rastro usa um campo PRÓPRIO, dedicado — mais lento, mais pesado,
+    // com ondulações bem maiores, porque não precisa ficar legível como
+    // uma pessoa — ele é o "mar" por trás de tudo.
+    /// Frequência espacial do campo do rastro — bem menor que a do
+    /// reflexo/ecos, de propósito: ondulações grandes e vastas, não um
+    /// padrão fino repetido.
+    pub trail_displacement_frequency: f32,
+    /// Velocidade do campo do rastro — bem mais lenta que a do
+    /// reflexo/ecos: o mar "rasteja", não treme.
+    pub trail_displacement_speed: f32,
+    /// Amplitude do campo do rastro — maior que a do reflexo/ecos, para
+    /// compensar a baixa frequência/velocidade (senão o efeito fica
+    /// "murcho" demais para se notar).
+    pub trail_displacement_amplitude: f32,
 }
 
 impl EffectConfig {
@@ -55,6 +108,18 @@ impl EffectConfig {
             // visível por mais tempo depois que o movimento para.
             trail_decay_per_second: 0.4,
             trail_capture_opacity: 0.4,
+
+            // Meia-vida ≈ 115s (ln(2)/0.006) — longa o suficiente para
+            // um visitante de alguns minutos ainda reconhecer posições
+            // antigas, sem saturar a tela num dia inteiro de uso.
+            trail_deep_decay_per_second: 0.006,
+            trail_deep_capture_opacity: 0.18,
+            trail_deep_floor_ratio: 0.35,
+            trail_oscillation_period_seconds: 30.0,
+
+            trail_displacement_frequency: 0.7,
+            trail_displacement_speed: 0.12,
+            trail_displacement_amplitude: 0.045,
         }
     }
 }

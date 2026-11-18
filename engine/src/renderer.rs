@@ -107,6 +107,15 @@ struct DrawUniforms {
     /// num eco recém-nascido. Ver comentário completo em
     /// `EffectConfig::echo_displacement_floor` (`effects.rs`).
     echo_displacement_floor: f32,
+    /// Só usadas no modo 3 (rastro) — ver `EffectConfig::trail_displacement_*`
+    /// (`effects.rs`) e `apply_solaris_displacement` (`displacement.wgsl`).
+    trail_displacement_frequency: f32,
+    trail_displacement_speed: f32,
+    trail_displacement_amplitude: f32,
+    /// Também só usadas no modo 3 — ver `EffectConfig::trail_oscillation_period_seconds`
+    /// e `trail_deep_floor_ratio` (`effects.rs`).
+    trail_oscillation_period_seconds: f32,
+    trail_deep_floor_ratio: f32,
     /// Modo de diagnóstico (ver seção "modo debug" no topo do arquivo):
     /// quando > 0.5, o reflexo atual (draw_mode == LIVE) usa uma
     /// distorção bem mais forte e sempre ligada, em vez da distorção
@@ -134,6 +143,11 @@ fn make_uniforms(effects: &EffectConfig, draw_mode: f32, opacity: f32, age_ratio
         displacement_amplitude: effects.displacement_amplitude,
         dissolve_fragmentation: effects.dissolve_fragmentation,
         echo_displacement_floor: effects.echo_displacement_floor,
+        trail_displacement_frequency: effects.trail_displacement_frequency,
+        trail_displacement_speed: effects.trail_displacement_speed,
+        trail_displacement_amplitude: effects.trail_displacement_amplitude,
+        trail_oscillation_period_seconds: effects.trail_oscillation_period_seconds,
+        trail_deep_floor_ratio: effects.trail_deep_floor_ratio,
         debug_force_distortion: 0.0,
     }
 }
@@ -247,6 +261,14 @@ pub struct Renderer {
     /// papel (veja `std::mem::swap` em `render`).
     trail_front: ReusableTexture,
     trail_back: ReusableTexture,
+    /// A camada PROFUNDA do rastro ("mar de Solaris"): o mesmo esquema de
+    /// ping-pong acima, mas com decaimento muito mais lento e que nunca
+    /// chega a zerar de verdade na tela (ver `trail_deep_floor_ratio` em
+    /// `effects.rs` e o modo de desenho 3 em `composite.wgsl`). Alimentada
+    /// pela mesma captura que a camada recente, na mesma hora — só o
+    /// ritmo de desbotamento/opacidade de captura é diferente.
+    trail_deep_front: ReusableTexture,
+    trail_deep_back: ReusableTexture,
     /// Quando este Renderer desenhou o último quadro. Usado para medir
     /// quanto tempo realmente passou (em segundos) desde então, para
     /// que o desbotamento do rastro dependa do tempo, não do FPS.
@@ -437,6 +459,8 @@ impl Renderer {
         let trail_capture_texture = ReusableTexture::new(&device, 1, 1, "trail_capture_texture", no_extra_usage);
         let trail_front = ReusableTexture::new(&device, 1, 1, "trail_front", wgpu::TextureUsages::RENDER_ATTACHMENT);
         let trail_back = ReusableTexture::new(&device, 1, 1, "trail_back", wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let trail_deep_front = ReusableTexture::new(&device, 1, 1, "trail_deep_front", wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let trail_deep_back = ReusableTexture::new(&device, 1, 1, "trail_deep_back", wgpu::TextureUsages::RENDER_ATTACHMENT);
 
         Ok(Renderer {
             surface,
@@ -455,6 +479,8 @@ impl Renderer {
             trail_capture_texture,
             trail_front,
             trail_back,
+            trail_deep_front,
+            trail_deep_back,
             last_render_ms: None,
             last_trail_capture_applied_ms: None,
             effects: EffectConfig::default_config(),
@@ -505,6 +531,8 @@ impl Renderer {
         let no_extra_usage = wgpu::TextureUsages::empty();
         self.trail_front = ReusableTexture::new(&self.device, 1, 1, "trail_front", wgpu::TextureUsages::RENDER_ATTACHMENT);
         self.trail_back = ReusableTexture::new(&self.device, 1, 1, "trail_back", wgpu::TextureUsages::RENDER_ATTACHMENT);
+        self.trail_deep_front = ReusableTexture::new(&self.device, 1, 1, "trail_deep_front", wgpu::TextureUsages::RENDER_ATTACHMENT);
+        self.trail_deep_back = ReusableTexture::new(&self.device, 1, 1, "trail_deep_back", wgpu::TextureUsages::RENDER_ATTACHMENT);
         self.trail_capture_texture = ReusableTexture::new(&self.device, 1, 1, "trail_capture_texture", no_extra_usage);
         self.last_trail_capture_applied_ms = None;
         self.last_render_ms = None;
@@ -542,6 +570,13 @@ impl Renderer {
         echo_displacement_floor: f32,
         trail_decay_per_second: f32,
         trail_capture_opacity: f32,
+        trail_deep_decay_per_second: f32,
+        trail_deep_capture_opacity: f32,
+        trail_deep_floor_ratio: f32,
+        trail_oscillation_period_seconds: f32,
+        trail_displacement_frequency: f32,
+        trail_displacement_speed: f32,
+        trail_displacement_amplitude: f32,
     ) {
         self.effects = EffectConfig {
             displacement_intensity,
@@ -552,6 +587,13 @@ impl Renderer {
             echo_displacement_floor,
             trail_decay_per_second,
             trail_capture_opacity,
+            trail_deep_decay_per_second,
+            trail_deep_capture_opacity,
+            trail_deep_floor_ratio,
+            trail_oscillation_period_seconds,
+            trail_displacement_frequency,
+            trail_displacement_speed,
+            trail_displacement_amplitude,
         };
     }
 
@@ -667,7 +709,10 @@ impl Renderer {
         // presença "mais viva" entre as memórias.
         let trail_draw_mode = if self.debug_force_magenta { DRAW_MODE_DEBUG_MAGENTA } else { DRAW_MODE_TRAIL };
         let trail_uniforms = make_uniforms(&self.effects, trail_draw_mode, 1.0, 0.0, 0.0, 0.0, time_seconds);
-        self.draw_quad(&target_view, &self.trail_front.view, &self.trail_front.view, trail_uniforms, false, None);
+        // O segundo parâmetro de textura (pensado para a textura de
+        // deslocamento do modo 1) é reaproveitado aqui para a camada
+        // PROFUNDA do rastro — ver o comentário no topo de `composite.wgsl`.
+        self.draw_quad(&target_view, &self.trail_front.view, &self.trail_deep_front.view, trail_uniforms, false, None);
 
         frame.present();
         Ok(())
@@ -688,6 +733,7 @@ impl Renderer {
         is_first_render: bool,
     ) {
         self.trail_back.ensure_size(&self.device, capture_width, capture_height, "trail_back");
+        self.trail_deep_back.ensure_size(&self.device, capture_width, capture_height, "trail_deep_back");
         self.trail_capture_texture
             .ensure_size(&self.device, capture_width, capture_height, "trail_capture_texture");
 
@@ -697,6 +743,10 @@ impl Renderer {
         // porque depende do tempo real passado (`dt_seconds`), não da
         // quantidade de quadros.
         let decay_factor = trail_decay_factor(self.effects.trail_decay_per_second, dt_seconds);
+        // A camada profunda usa a MESMA fórmula de decaimento, só com uma
+        // taxa muito menor (meia-vida de minutos, não de segundos) — ver
+        // `EffectConfig::trail_deep_decay_per_second`.
+        let deep_decay_factor = trail_decay_factor(self.effects.trail_deep_decay_per_second, dt_seconds);
 
         if !is_first_render {
             // Passo 1: copia o rastro antigo para o novo buffer, já
@@ -710,6 +760,18 @@ impl Renderer {
                 &self.trail_front.view,
                 &self.trail_front.view,
                 decay_uniforms,
+                false,
+                Some(CLEAR_COLOR_TRANSPARENT),
+            );
+
+            // Mesmo passo, para a camada profunda — desbotando bem mais
+            // devagar (`deep_decay_factor`).
+            let deep_decay_uniforms = make_uniforms(&self.effects, DRAW_MODE_PLAIN, deep_decay_factor, 0.0, 0.0, 0.0, 0.0);
+            self.draw_quad(
+                &self.trail_deep_back.view,
+                &self.trail_deep_front.view,
+                &self.trail_deep_front.view,
+                deep_decay_uniforms,
                 false,
                 Some(CLEAR_COLOR_TRANSPARENT),
             );
@@ -742,10 +804,23 @@ impl Renderer {
                 if is_first_render { Some(CLEAR_COLOR_TRANSPARENT) } else { None },
             );
 
+            // Mesma captura, somada à camada profunda com sua própria
+            // opacidade (bem menor — ela é memória, não presença viva).
+            let deep_capture_uniforms = make_uniforms(&self.effects, DRAW_MODE_PLAIN, self.effects.trail_deep_capture_opacity, 0.0, 0.0, 0.0, 0.0);
+            self.draw_quad(
+                &self.trail_deep_back.view,
+                &self.trail_capture_texture.view,
+                &self.trail_deep_front.view,
+                deep_capture_uniforms,
+                false,
+                if is_first_render { Some(CLEAR_COLOR_TRANSPARENT) } else { None },
+            );
+
             self.last_trail_capture_applied_ms = Some(capture_timestamp_ms);
         }
 
         std::mem::swap(&mut self.trail_front, &mut self.trail_back);
+        std::mem::swap(&mut self.trail_deep_front, &mut self.trail_deep_back);
     }
 
     /// Desenha um único "quad" (retângulo cobrindo o alvo) com a textura

@@ -24,8 +24,14 @@
 //     rastro (copiar o conteúdo antigo já desbotado, e depois somar a
 //     captura nova por cima). Não tem distorção, dissolução nem cinza.
 // 3 = rastro (o acumulador em si, desenhado na tela por cima de tudo):
-//     uma distorção orgânica suave, mas sem dissolução por máscara nem
-//     conversão para cinza — ele é a presença mais "viva" e recente.
+//     sem dissolução por máscara nem conversão para cinza. Tem DUAS
+//     camadas: a recente (textura principal, binding 1), que é a
+//     presença mais "viva", e a profunda (binding 3, reaproveitando o
+//     binding da textura de deslocamento — só o modo 1 usa esse
+//     binding com esse propósito), que nunca desaparece de verdade —
+//     só oscila entre um piso mínimo e totalmente visível ("mar de
+//     Solaris"). A distorção aqui é dedicada (`apply_solaris_displacement`,
+//     `displacement.wgsl`), bem mais pesada e lenta que a do reflexo/ecos.
 // 4 = modo de diagnóstico ("eco forçado"): ignora a cor da textura e
 //     desenha magenta sólido, só para provar visualmente que o eco/
 //     rastro chegou até aqui. Nunca usado na experiência final.
@@ -46,6 +52,16 @@ struct DrawUniforms {
     // isso, um eco nasce sem nenhuma distorção (força = idade) e só
     // ganha essa "textura líquida" conforme envelhece.
     echo_displacement_floor: f32,
+    // Só usadas no modo 3 (rastro) — ver `apply_solaris_displacement` em
+    // `displacement.wgsl`.
+    trail_displacement_frequency: f32,
+    trail_displacement_speed: f32,
+    trail_displacement_amplitude: f32,
+    // Período (segundos) da oscilação "aparece e desaparece" da camada
+    // profunda do rastro, e a fração mínima dela que nunca é cruzada.
+    // Ver `solaris_swell` em `displacement.wgsl`.
+    trail_oscillation_period_seconds: f32,
+    trail_deep_floor_ratio: f32,
     // Modo de diagnóstico ("distorção forçada"): só tem efeito no modo 1
     // (reflexo atual). Quando > 0.5, força uma distorção forte e
     // constante, em vez da distorção sutil ligada à presença real no
@@ -56,10 +72,11 @@ struct DrawUniforms {
 @group(0) @binding(0) var<uniform> draw: DrawUniforms;
 @group(0) @binding(1) var quad_texture: texture_2d<f32>;
 @group(0) @binding(2) var quad_sampler: sampler;
-// Textura usada só pelo modo 1 (reflexo atual): o acumulador de rastro,
-// para sabermos onde houve presença recente. Nos outros modos, este
-// binding precisa existir (a GPU exige um recurso válido para cada
-// binding declarado), mas seu conteúdo não é lido.
+// Binding de uso duplo, dependendo do modo: no modo 1 (reflexo atual) é
+// o acumulador de rastro recente, para sabermos onde houve presença
+// recente; no modo 3 (rastro) é a camada PROFUNDA do rastro (ver acima).
+// Nos outros modos, este binding precisa existir (a GPU exige um recurso
+// válido para cada binding declarado), mas seu conteúdo não é lido.
 @group(0) @binding(3) var displacement_texture: texture_2d<f32>;
 
 struct VertexOutput {
@@ -166,18 +183,38 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(color.rgb, color.a * alpha);
     }
 
-    // Modo 3 — o próprio rastro, desenhado na tela: uma distorção
-    // orgânica suave e constante (não ligada a "idade", já que o
-    // rastro não é um registro discreto), mas sem dissolução por
-    // máscara nem conversão para cinza — ele é a camada mais "viva".
+    // Modo 3 — o rastro, desenhado na tela por cima de tudo. Combina
+    // duas camadas: a recente (reage a movimento novo, desbota rápido)
+    // e a profunda ("mar de Solaris" — nunca desaparece de verdade, só
+    // oscila). As duas passam pela mesma distorção pesada e lenta,
+    // dedicada ao rastro (não a sutil do reflexo/ecos).
     if (draw.draw_mode == 3.0) {
-        uv = apply_organic_displacement(
-            uv, draw.time_seconds, draw.displacement_intensity * 0.5,
-            draw.displacement_frequency, draw.displacement_speed, draw.displacement_amplitude,
-            1.0,
+        uv = apply_solaris_displacement(
+            uv, draw.time_seconds,
+            draw.trail_displacement_frequency, draw.trail_displacement_speed, draw.trail_displacement_amplitude,
+            draw.displacement_intensity,
         );
-        let color = textureSample(quad_texture, quad_sampler, uv);
-        return vec4<f32>(color.rgb, color.a * alpha);
+
+        let fast_color = textureSample(quad_texture, quad_sampler, uv);
+
+        // A camada profunda oscila entre `trail_deep_floor_ratio` (nunca
+        // menos que isso) e totalmente visível — com fase que varia por
+        // posição na tela (`solaris_swell`), para não parecer um flash
+        // sincronizado.
+        let deep_sample = textureSample(displacement_texture, quad_sampler, uv);
+        let swell = solaris_swell(in.uv, draw.time_seconds, draw.trail_oscillation_period_seconds);
+        let deep_strength = draw.trail_deep_floor_ratio + (1.0 - draw.trail_deep_floor_ratio) * swell;
+        let deep_alpha = deep_sample.a * deep_strength;
+
+        // Onde o rastro recente tem conteúdo, ele domina a cor (é a
+        // presença mais "viva"); fora dali, só a cor da camada profunda
+        // aparece. Os alfas se somam (limitados a 1.0) — são duas
+        // presenças parcialmente translúcidas, não uma substituindo a
+        // outra.
+        let combined_rgb = mix(deep_sample.rgb, fast_color.rgb, fast_color.a);
+        let combined_alpha = clamp(fast_color.a + deep_alpha, 0.0, 1.0);
+
+        return vec4<f32>(combined_rgb, combined_alpha * alpha);
     }
 
     // Modo 4 — diagnóstico ("eco forçado"): ignora a cor de verdade e

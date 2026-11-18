@@ -33,6 +33,20 @@ export interface EffectsConfig {
   trailDecayPerSecond: number;
   /** Opacidade com que cada captura nova é somada ao acumulador de rastro. */
   trailCaptureOpacity: number;
+  /** Taxa de esquecimento da camada PROFUNDA do rastro ("mar de Solaris") — bem menor que trailDecayPerSecond. */
+  trailDeepDecayPerSecond: number;
+  /** Opacidade com que cada captura nova é somada à camada profunda. */
+  trailDeepCaptureOpacity: number;
+  /** Fração mínima da camada profunda que a oscilação nunca cruza (ela nunca desaparece de verdade). */
+  trailDeepFloorRatio: number;
+  /** Período (segundos) de um ciclo completo de "esmaecer e voltar" da camada profunda. */
+  trailOscillationPeriodSeconds: number;
+  /** Frequência espacial da distorção dedicada ao rastro (mais baixa que a do reflexo/ecos). */
+  trailDisplacementFrequency: number;
+  /** Velocidade da distorção dedicada ao rastro (mais lenta que a do reflexo/ecos). */
+  trailDisplacementSpeed: number;
+  /** Amplitude da distorção dedicada ao rastro (maior que a do reflexo/ecos). */
+  trailDisplacementAmplitude: number;
 }
 
 export interface CaptureConfig {
@@ -97,6 +111,13 @@ const FALLBACK_CONFIG: AppConfig = {
     additiveEchoes: false,
     trailDecayPerSecond: 0.4,
     trailCaptureOpacity: 0.4,
+    trailDeepDecayPerSecond: 0.006,
+    trailDeepCaptureOpacity: 0.18,
+    trailDeepFloorRatio: 0.35,
+    trailOscillationPeriodSeconds: 30.0,
+    trailDisplacementFrequency: 0.7,
+    trailDisplacementSpeed: 0.12,
+    trailDisplacementAmplitude: 0.045,
   },
   capture: {
     memoryMaxDim: 160,

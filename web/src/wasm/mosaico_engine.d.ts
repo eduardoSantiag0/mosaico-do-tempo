@@ -89,7 +89,7 @@ export class Renderer {
      * deslocamento temporal, a dissolução dos ecos, e o ritmo com que
      * o acumulador de rastro desbota.
      */
-    configureEffects(displacement_intensity: number, displacement_frequency: number, displacement_speed: number, displacement_amplitude: number, dissolve_fragmentation: number, echo_displacement_floor: number, trail_decay_per_second: number, trail_capture_opacity: number): void;
+    configureEffects(displacement_intensity: number, displacement_frequency: number, displacement_speed: number, displacement_amplitude: number, dissolve_fragmentation: number, echo_displacement_floor: number, trail_decay_per_second: number, trail_capture_opacity: number, trail_deep_decay_per_second: number, trail_deep_capture_opacity: number, trail_deep_floor_ratio: number, trail_oscillation_period_seconds: number, trail_displacement_frequency: number, trail_displacement_speed: number, trail_displacement_amplitude: number): void;
     /**
      * Cria o Renderer. É uma função assíncrona porque pedir acesso à
      * GPU (adaptador e dispositivo) é uma operação assíncrona no
@@ -181,7 +181,7 @@ export interface InitOutput {
     readonly engine_update: (a: number, b: number) => number;
     readonly engine_version: () => [number, number];
     readonly renderer_backendName: (a: number) => [number, number];
-    readonly renderer_configureEffects: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly renderer_configureEffects: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => void;
     readonly renderer_create: (a: any, b: number, c: number) => any;
     readonly renderer_lastFrameSubmitCount: (a: number) => number;
     readonly renderer_render: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number];

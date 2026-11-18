@@ -118,6 +118,34 @@ export class DebugPanel {
       this.effects.trailCaptureOpacity = v;
       this.emit();
     });
+    this.addSlider("Rastro profundo: decaimento/s", 0, 0.05, 0.001, this.effects.trailDeepDecayPerSecond, (v) => {
+      this.effects.trailDeepDecayPerSecond = v;
+      this.emit();
+    });
+    this.addSlider("Rastro profundo: opacidade da captura", 0, 1, 0.01, this.effects.trailDeepCaptureOpacity, (v) => {
+      this.effects.trailDeepCaptureOpacity = v;
+      this.emit();
+    });
+    this.addSlider("Rastro profundo: piso (nunca apaga)", 0, 1, 0.01, this.effects.trailDeepFloorRatio, (v) => {
+      this.effects.trailDeepFloorRatio = v;
+      this.emit();
+    });
+    this.addSlider("Rastro profundo: período da oscilação (s)", 2, 120, 1, this.effects.trailOscillationPeriodSeconds, (v) => {
+      this.effects.trailOscillationPeriodSeconds = v;
+      this.emit();
+    });
+    this.addSlider("Rastro (Solaris): frequência", 0, 3, 0.05, this.effects.trailDisplacementFrequency, (v) => {
+      this.effects.trailDisplacementFrequency = v;
+      this.emit();
+    });
+    this.addSlider("Rastro (Solaris): velocidade", 0, 1, 0.01, this.effects.trailDisplacementSpeed, (v) => {
+      this.effects.trailDisplacementSpeed = v;
+      this.emit();
+    });
+    this.addSlider("Rastro (Solaris): amplitude", 0, 0.2, 0.001, this.effects.trailDisplacementAmplitude, (v) => {
+      this.effects.trailDisplacementAmplitude = v;
+      this.emit();
+    });
     this.addCheckbox("Mistura aditiva nos ecos", this.effects.additiveEchoes, (v) => {
       this.effects.additiveEchoes = v;
       this.emit();

@@ -113,6 +113,8 @@ async function boot(): Promise<void> {
   ui.onStart(() => void startExperience());
   ui.onRetry(() => void startExperience());
   ui.onExit(() => stopExperience());
+  ui.onPhilosophyOpen(() => ui.setPhilosophyVisible(true));
+  ui.onPhilosophyClose(() => ui.setPhilosophyVisible(false));
 
   window.addEventListener("resize", () => {
     resizeCanvas();
@@ -202,6 +204,13 @@ function applyEffectsToRenderer(effects: EffectsConfig): void {
     effects.echoDisplacementFloor,
     effects.trailDecayPerSecond,
     effects.trailCaptureOpacity,
+    effects.trailDeepDecayPerSecond,
+    effects.trailDeepCaptureOpacity,
+    effects.trailDeepFloorRatio,
+    effects.trailOscillationPeriodSeconds,
+    effects.trailDisplacementFrequency,
+    effects.trailDisplacementSpeed,
+    effects.trailDisplacementAmplitude,
   );
   gpuRenderer.setAdditiveEchoes(effects.additiveEchoes);
 }
