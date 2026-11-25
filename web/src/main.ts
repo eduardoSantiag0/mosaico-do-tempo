@@ -1,6 +1,6 @@
 import initEngine, { Engine, Renderer, engine_version } from "./wasm/mosaico_engine.js";
 import { CameraController, CameraError } from "./camera.js";
-import { SegmentationService } from "./segmentation.js";
+import { SegmentationService, type SegmentationMask } from "./segmentation.js";
 import { UI } from "./ui.js";
 import { loadConfig, type AppConfig, type EffectsConfig, type MemoryLayerConfig } from "./config.js";
 import { DebugPanel } from "./debugPanel.js";
@@ -72,10 +72,19 @@ let lastTrailUpdateMs: number | null = null;
 /** O `lastTrailCaptureMs` já somado ao acumulador do fallback Canvas 2D — evita somar a mesma captura mais de uma vez. */
 let lastAppliedTrailCaptureMs: number | null = null;
 
+const ECHO_CLIP_FRAME_COUNT = 7;
+let pendingEchoClip: {
+  width: number;
+  height: number;
+  masked: boolean;
+  frameCount: number;
+  pixels: Uint8Array;
+} | null = null;
 let lastCaptureMs = -Infinity;
 let lastTrailCaptureMs = -Infinity;
+let firstCameraFrameMs: number | null = null;
 let lastSegmentationRequestMs = -Infinity;
-let effectiveMemoryIntervalMs = 500;
+let effectiveMemoryIntervalMs = 125;
 let effectiveTrailIntervalMs = 90;
 let effectiveSegmentationIntervalMs = 200;
 
@@ -248,7 +257,7 @@ function applyQualityLevel(level: QualityLevel): void {
   resizeCanvas();
 
   applyMemoryLayerConfig(config.memory.intermediate, "intermediate", scale.capacity);
-  applyMemoryLayerConfig(config.memory.long, "long", scale.capacity);
+  applyMemoryLayerConfig(config.memory.long, "long", 1);
 
   if (level !== "high") {
     console.info(`[mosaico] qualidade reduzida para "${level}" (FPS baixo detectado)`);
@@ -274,6 +283,8 @@ async function startExperience(): Promise<void> {
 
   ui.showScreen("experience");
   resumeLoop();
+
+  
 
   // Só agora é seguro mostrar o painel de diagnóstico (`?debug=true`):
   // na tela inicial, ele ficaria sobre o botão "Iniciar experiência" e
@@ -304,7 +315,9 @@ function stopExperience(): void {
   gpuRenderer?.reset(); // esvazia o acumulador de rastro na GPU, para a próxima sessão não começar com vestígios da anterior
   performanceManager.reset();
   lastCaptureMs = -Infinity;
+  pendingEchoClip = null;
   lastTrailCaptureMs = -Infinity;
+  firstCameraFrameMs = null;
   lastSegmentationRequestMs = -Infinity;
   lastTrailUpdateMs = null;
   lastAppliedTrailCaptureMs = null;
@@ -345,13 +358,17 @@ function renderFrame(): void {
 
   performanceManager.recordFrame(now);
 
-  if (now - lastCaptureMs >= effectiveMemoryIntervalMs) {
-    captureIntoMemory(now);
+  const mask = segmentation.getLatestMask();
+  const cameraHasFrame = camera.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+  if (cameraHasFrame) firstCameraFrameMs ??= now;
+  const canCaptureEcho = mask || (firstCameraFrameMs !== null && now - firstCameraFrameMs >= 1500);
+  if (cameraHasFrame && canCaptureEcho && now - lastCaptureMs >= effectiveMemoryIntervalMs) {
+    captureIntoMemory(now, mask);
     lastCaptureMs = now;
   }
 
-  if (now - lastTrailCaptureMs >= effectiveTrailIntervalMs) {
-    captureTrailFrame();
+  if (mask && now - lastTrailCaptureMs >= effectiveTrailIntervalMs) {
+    captureTrailFrame(mask);
     lastTrailCaptureMs = now;
   }
 
@@ -518,7 +535,7 @@ function updateAndDrawTrailCanvas2d(nowMs: number): void {
   // roda a cada quadro, mas uma captura nova só chega a cada
   // `effectiveTrailIntervalMs` — sem essa checagem, a mesma imagem seria
   // somada várias vezes seguidas e o rastro ficaria opaco rápido demais.
-  if (lastAppliedTrailCaptureMs !== lastTrailCaptureMs) {
+  if (Number.isFinite(lastTrailCaptureMs) && lastAppliedTrailCaptureMs !== lastTrailCaptureMs) {
     trailAccumBackCtx.globalAlpha = currentEffects.trailCaptureOpacity;
     trailAccumBackCtx.drawImage(trailCaptureCanvas, 0, 0, trailAccumBack.width, trailAccumBack.height);
     lastAppliedTrailCaptureMs = lastTrailCaptureMs;
@@ -612,8 +629,8 @@ function drawCoverMirroredWithForcedDistortion(
   target.restore();
 }
 
-/** Downsamples the current (already-mirrored) frame and stores it in the engine. */
-function captureIntoMemory(nowMs: number): void {
+/** Captura um quadro reduzido e envia o clipe à memória quando estiver completo. */
+function captureIntoMemory(nowMs: number, mask: SegmentationMask | null): void {
   const { video } = camera;
   if (video.videoWidth === 0) return;
 
@@ -623,10 +640,32 @@ function captureIntoMemory(nowMs: number): void {
   // Só os vestígios no passado (a memória) devem mostrar apenas a
   // silhueta da pessoa (RF04); o reflexo atual continua mostrando tudo,
   // como um espelho de verdade.
-  applySegmentationToAlpha(frame.data, frame.width, frame.height);
+  if (mask) applySegmentationToAlpha(frame.data, frame.width, frame.height, mask);
 
-  const bytes = new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
-  engine.insertFrame(nowMs, frame.width, frame.height, 1.0, bytes);
+  const masked = mask !== null;
+  if (
+    pendingEchoClip === null ||
+    pendingEchoClip.width !== frame.width ||
+    pendingEchoClip.height !== frame.height ||
+    pendingEchoClip.masked !== masked ||
+    nowMs - lastCaptureMs > effectiveMemoryIntervalMs * 2.5
+  ) {
+    pendingEchoClip = {
+      width: frame.width,
+      height: frame.height,
+      masked,
+      frameCount: 0,
+      pixels: new Uint8Array(frame.data.length * ECHO_CLIP_FRAME_COUNT),
+    };
+  }
+  const clip = pendingEchoClip;
+  clip.pixels.set(frame.data, clip.frameCount * frame.data.length);
+  clip.frameCount++;
+  if (clip.frameCount < ECHO_CLIP_FRAME_COUNT) return;
+
+  // Sem segmentação, um eco mais translúcido evita encobrir o reflexo com o fundo antigo.
+  engine.insertClip(nowMs, clip.width, clip.height, masked ? 1.0 : 0.35, effectiveMemoryIntervalMs, clip.pixels);
+  pendingEchoClip = null;
 }
 
 /**
@@ -636,13 +675,13 @@ function captureIntoMemory(nowMs: number): void {
  * que `captureIntoMemory`, para o rastro acompanhar o movimento de
  * perto.
  */
-function captureTrailFrame(): void {
+function captureTrailFrame(mask: SegmentationMask): void {
   const { video } = camera;
   if (video.videoWidth === 0) return;
 
   drawCoverMirrored(video, trailCaptureCtx, trailCaptureCanvas.width, trailCaptureCanvas.height);
   const frame = trailCaptureCtx.getImageData(0, 0, trailCaptureCanvas.width, trailCaptureCanvas.height);
-  applySegmentationToAlpha(frame.data, frame.width, frame.height);
+  applySegmentationToAlpha(frame.data, frame.width, frame.height, mask);
   trailCaptureCtx.putImageData(frame, 0, 0);
 }
 
@@ -661,15 +700,9 @@ function requestSegmentation(nowMs: number): void {
 
 /**
  * Multiplica o canal alfa de `pixels` pela máscara de segmentação mais
- * recente (0.0 = fundo, 1.0 = pessoa). Se ainda não houver nenhuma
- * máscara disponível (modelo carregando, por exemplo), não faz nada — a
- * imagem continua com alfa cheio, exatamente como antes da Etapa 4
- * (RF04: a aplicação deve continuar funcionando mesmo sem segmentação).
+ * recente (0.0 = fundo, 1.0 = pessoa).
  */
-function applySegmentationToAlpha(pixels: Uint8ClampedArray, width: number, height: number): void {
-  const mask = segmentation.getLatestMask();
-  if (!mask) return;
-
+function applySegmentationToAlpha(pixels: Uint8ClampedArray, width: number, height: number, mask: SegmentationMask): void {
   for (let y = 0; y < height; y++) {
     const maskY = Math.min(mask.height - 1, Math.floor((y / height) * mask.height));
     for (let x = 0; x < width; x++) {
@@ -759,9 +792,8 @@ function resizeCanvas(): void {
   trailAccumBack.width = trailSize.width;
   trailAccumBack.height = trailSize.height;
 
-  const liveSize = downscaledSize(aspect, Math.max(64, Math.round(config.capture.liveMaxDim * scale)));
-  liveCanvas.width = liveSize.width;
-  liveCanvas.height = liveSize.height;
+  liveCanvas.width = canvas.width;
+  liveCanvas.height = canvas.height;
 
   const segSize = downscaledSize(aspect, Math.max(32, Math.round(config.capture.segmentationMaxDim * scale)));
   segInputCanvas.width = segSize.width;

@@ -162,7 +162,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let gray = vec3<f32>(luminance, luminance, luminance);
         let rgb = mix(color.rgb, gray, gray_mix);
 
-        return vec4<f32>(rgb, color.a * alpha);
+        return vec4<f32>(0.0, 1.0, 1.0, color.a * alpha);
     }
 
     // Modo 1 — reflexo atual: o campo de deslocamento temporal. Onde o

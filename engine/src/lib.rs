@@ -110,11 +110,29 @@ impl Engine {
     /// conta própria, se vai realmente guardar essa captura ou não.
     #[wasm_bindgen(js_name = insertFrame)]
     pub fn insert_frame(&mut self, timestamp_ms: f64, width: u32, height: u32, intensity: f32, rgba: &[u8]) {
+        self.insert_clip(timestamp_ms, width, height, intensity, 1.0, rgba);
+    }
+
+    /// Recebe quadros RGBA consecutivos de um clipe, todos com as mesmas dimensões.
+    #[wasm_bindgen(js_name = insertClip)]
+    pub fn insert_clip(&mut self, timestamp_ms: f64, width: u32, height: u32, intensity: f32, frame_interval_ms: f64, rgba: &[u8]) {
+        let Some(frame_bytes) = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+        else {
+            return;
+        };
+        if frame_bytes == 0 || rgba.is_empty() || rgba.len() % frame_bytes != 0 ||
+            !timestamp_ms.is_finite() || !frame_interval_ms.is_finite() || frame_interval_ms <= 0.0 {
+            return;
+        }
+
         let record = MemoryRecord {
             timestamp_ms,
             width,
             height,
-            pixels: rgba.to_vec(),
+            pixels: rgba.into(),
+            frame_interval_ms,
             intensity,
         };
         self.memory.insert(record);
@@ -287,6 +305,38 @@ mod tests {
 
         engine.reset();
         assert_eq!(engine.total_bytes(), 0);
+    }
+
+    #[test]
+    fn slow_clips_expire_and_their_still_frames_remain() {
+        let mut engine = Engine::new();
+        engine.insert_clip(0.0, 1, 1, 1.0, 100.0, &[10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255]);
+
+        let pixels_for = |engine: &Engine, layer| {
+            engine.active_cache.iter().find(|record| record.layer == layer).unwrap().pixels[0]
+        };
+        engine.update(0.0);
+        assert_eq!(pixels_for(&engine, LayerKind::Intermediate), 10);
+        assert_eq!(pixels_for(&engine, LayerKind::Long), 20);
+
+        let intermediate_opacity = |engine: &Engine| {
+            engine.active_cache.iter().find(|record| record.layer == LayerKind::Intermediate).unwrap().opacity
+        };
+        let initial_opacity = intermediate_opacity(&engine);
+        for (time, expected) in [(100.0, 10), (200.0, 20), (400.0, 30), (550.0, 30), (750.0, 30)] {
+            engine.update(time);
+            assert_eq!(pixels_for(&engine, LayerKind::Intermediate), expected);
+            assert_eq!(pixels_for(&engine, LayerKind::Long), 20);
+            if time < 360.0 {
+                assert_eq!(intermediate_opacity(&engine), initial_opacity);
+            } else {
+                assert!(intermediate_opacity(&engine) < initial_opacity);
+            }
+        }
+
+        assert_eq!(engine.update(300_000.0), 1);
+        assert_eq!(pixels_for(&engine, LayerKind::Long), 20);
+        assert!(engine.active_cache[0].opacity > 0.0);
     }
 }
 

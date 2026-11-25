@@ -37,6 +37,7 @@ body {
   height: 100%;
   display: block;
   background: #000;
+  filter: brightness(1.25);
 }
 
 .overlay {

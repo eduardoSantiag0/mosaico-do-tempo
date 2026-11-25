@@ -45,6 +45,10 @@ export class Engine {
      */
     configureLayer(layer: string, capacity: number, capture_interval_ms: number, max_age_ms: number, base_weight: number, fade_power: number, drift_amount: number, reappearance_strength: number, reappearance_frequency: number): void;
     /**
+     * Recebe quadros RGBA consecutivos de um clipe, todos com as mesmas dimensões.
+     */
+    insertClip(timestamp_ms: number, width: number, height: number, intensity: number, frame_interval_ms: number, rgba: Uint8Array | number[]): void;
+    /**
      * Recebe uma captura de imagem (já em resolução reduzida, no formato
      * RGBA) e entrega para a memória guardar. Cada camada decide, por
      * conta própria, se vai realmente guardar essa captura ou não.
@@ -174,6 +178,7 @@ export interface InitOutput {
     readonly engine_activePixels: (a: number, b: number) => [number, number];
     readonly engine_activeWidth: (a: number, b: number) => number;
     readonly engine_configureLayer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number];
+    readonly engine_insertClip: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly engine_insertFrame: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly engine_new: () => number;
     readonly engine_reset: (a: number) => void;
@@ -201,10 +206,10 @@ export interface InitOutput {
     readonly wgpu_render_bundle_pop_debug_group: (a: number) => void;
     readonly wgpu_render_bundle_set_index_buffer: (a: number, b: bigint, c: number, d: bigint, e: bigint) => void;
     readonly wgpu_render_bundle_push_debug_group: (a: number, b: number) => void;
-    readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___js_sys_b2e07bec349c6cad___Function_fn_wasm_bindgen_9e9d2b03fac4fd08___JsValue_____wasm_bindgen_9e9d2b03fac4fd08___sys__Undefined___js_sys_b2e07bec349c6cad___Function_fn_wasm_bindgen_9e9d2b03fac4fd08___JsValue_____wasm_bindgen_9e9d2b03fac4fd08___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9e9d2b03fac4fd08___JsError___true_: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_9e9d2b03fac4fd08___convert__closures_____invoke___wasm_bindgen_9e9d2b03fac4fd08___JsValue______true__29: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_359ff490097f3627___convert__closures_____invoke___js_sys_450af5873907ecce___Function_fn_wasm_bindgen_359ff490097f3627___JsValue_____wasm_bindgen_359ff490097f3627___sys__Undefined___js_sys_450af5873907ecce___Function_fn_wasm_bindgen_359ff490097f3627___JsValue_____wasm_bindgen_359ff490097f3627___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen_359ff490097f3627___convert__closures_____invoke___wasm_bindgen_359ff490097f3627___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_359ff490097f3627___JsError___true_: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_359ff490097f3627___convert__closures_____invoke___wasm_bindgen_359ff490097f3627___JsValue______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_359ff490097f3627___convert__closures_____invoke___wasm_bindgen_359ff490097f3627___JsValue______true__30: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;

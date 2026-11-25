@@ -6,32 +6,66 @@
 // "desenhado e desbotando" continuamente do que sendo um monte de fotos
 // separadas se sobrepondo (veja o comentário no topo de `renderer.rs`).
 //
-// A ideia aqui é simples: cada vez que a câmera captura uma imagem
-// reduzida da pessoa (já só com a silhueta, graças à segmentação),
-// guardamos essa imagem com um "timestamp" (o momento em que foi
-// capturada, em milissegundos). Com o tempo, decidimos se cada imagem
-// ainda deve aparecer na tela (ela "existe" por um tempo e depois
-// expira) e o quão visível ela deve estar (vai ficando mais
-// transparente/fraca, e também pode "pulsar" — ver `reappearance_*`
-// abaixo).
-//
-// Para não gastar memória demais, guardamos no máximo N imagens por
-// camada (um "buffer circular": quando enche, a mais antiga é
-// descartada para abrir espaço para a mais nova).
+// A memória intermediária guarda clipes curtos que desbotam e expiram.
+// A prolongada guarda quadros estáticos dos primeiros clipes até o fim
+// da sessão. Cada camada tem um limite de registros.
+
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct MemoryRecord {
-    /// O instante (em milissegundos) em que esta imagem foi capturada.
+    /// Instante do fim da captura, em milissegundos.
     pub timestamp_ms: f64,
     pub width: u32,
     pub height: u32,
-    /// Os pixels da imagem, no formato RGBA (4 bytes por pixel), já em
-    /// resolução reduzida. Nunca guardamos o frame da câmera em tamanho
-    /// completo aqui.
-    pub pixels: Vec<u8>,
+    /// Um ou mais quadros RGBA consecutivos em resolução reduzida.
+    pub pixels: Arc<[u8]>,
+    pub frame_interval_ms: f64,
     /// Um valor de 0.0 a 1.0 que diz "o quão importante/visível" essa
     /// captura deveria ser desde o início (pode vir sempre 1.0 por enquanto).
     pub intensity: f32,
+}
+
+impl MemoryRecord {
+    fn frame_bytes(&self) -> usize {
+        self.width as usize * self.height as usize * 4
+    }
+
+    fn playback_step_ms(&self) -> f64 {
+        let speed = 0.55 + 0.15 * (self.timestamp_ms * 0.0013).sin();
+        self.frame_interval_ms / speed
+    }
+
+    fn fade_age_ms(&self, age_ms: f64) -> f64 {
+        let last_frame = self.pixels.len() / self.frame_bytes() - 1;
+        (age_ms - last_frame as f64 * self.playback_step_ms()).max(0.0)
+    }
+
+    fn still_frame(&self) -> Self {
+        let frame_bytes = self.frame_bytes();
+        let frame_count = self.pixels.len() / frame_bytes;
+        if frame_count == 1 {
+            return self.clone();
+        }
+        let start = (frame_count / 2) * frame_bytes;
+        Self {
+            pixels: self.pixels[start..start + frame_bytes].into(),
+            ..self.clone()
+        }
+    }
+
+    fn playback_frame(&self, age_ms: f64) -> &[u8] {
+        let frame_bytes = self.frame_bytes();
+        let frame_count = self.pixels.len() / frame_bytes;
+        if frame_count == 1 {
+            return &self.pixels;
+        }
+
+        let step = (age_ms / self.playback_step_ms()).floor() as usize;
+        let index = step.min(frame_count - 1);
+        let start = index * frame_bytes;
+        &self.pixels[start..start + frame_bytes]
+    }
 }
 
 /// Configuração de uma camada de memória. Todos esses valores podem ser
@@ -89,12 +123,12 @@ impl LayerConfig {
     // registro passou a ser expulso ainda bem visível.
     pub fn intermediate_default() -> Self {
         LayerConfig {
-            capacity: 14,
-            capture_interval_ms: 1_857.0, // 14 * 1857 ≈ 26_000 = max_age_ms
-            max_age_ms: 26_000.0,
-            base_weight: 0.42,
+            capacity: 18,
+            capture_interval_ms: 1_500.0,
+            max_age_ms: 27_000.0,
+            base_weight: 0.60,
             fade_power: 1.4,
-            drift_amount: 0.025,
+            drift_amount: 0.008,
             reappearance_strength: 0.0,
             reappearance_frequency: 0.0,
         }
@@ -102,14 +136,14 @@ impl LayerConfig {
 
     pub fn long_default() -> Self {
         LayerConfig {
-            capacity: 8,
-            capture_interval_ms: 13_750.0, // 8 * 13750 = 110_000 = max_age_ms
+            capacity: 12,
+            capture_interval_ms: 8_000.0,
             max_age_ms: 110_000.0,
-            base_weight: 0.2,
-            fade_power: 2.0,
-            drift_amount: 0.05,
+            base_weight: 0.38,
+            fade_power: 1.5,
+            drift_amount: 0.015,
             // Em média, um "pico" de reaparecimento a cada ~16s de vida.
-            reappearance_strength: 0.65,
+            reappearance_strength: 0.45,
             reappearance_frequency: std::f32::consts::TAU / 16_000.0,
         }
     }
@@ -120,6 +154,7 @@ impl LayerConfig {
 #[derive(Clone, Copy, Debug)]
 pub struct RecordFade {
     pub age_ms: f64,
+    pub age_ratio: f32,
     pub opacity: f32,
     pub offset_x: f32,
     pub offset_y: f32,
@@ -130,7 +165,7 @@ pub struct RecordFade {
 fn compute_fade(record: &MemoryRecord, config: &LayerConfig, age_ms: f64) -> RecordFade {
     // "age_ratio" vai de 0.0 (acabou de nascer) até 1.0 (está no limite de
     // idade e vai desaparecer).
-    let mut age_ratio = age_ms / config.max_age_ms;
+    let mut age_ratio = record.fade_age_ms(age_ms) / config.max_age_ms;
     if age_ratio < 0.0 {
         age_ratio = 0.0;
     }
@@ -177,6 +212,7 @@ fn compute_fade(record: &MemoryRecord, config: &LayerConfig, age_ms: f64) -> Rec
 
     RecordFade {
         age_ms,
+        age_ratio,
         opacity,
         offset_x,
         offset_y,
@@ -189,6 +225,7 @@ fn compute_fade(record: &MemoryRecord, config: &LayerConfig, age_ms: f64) -> Rec
 pub struct MemoryLayer {
     pub config: LayerConfig,
     records: Vec<MemoryRecord>,
+    preserve_records: bool,
     /// Timestamp da última captura aceita. Usamos isso para saber se já
     /// passou tempo suficiente para aceitar uma nova (ver `capture_interval_ms`).
     last_capture_ms: Option<f64>,
@@ -199,6 +236,7 @@ impl MemoryLayer {
         MemoryLayer {
             config,
             records: Vec::new(),
+            preserve_records: false,
             last_capture_ms: None,
         }
     }
@@ -250,9 +288,10 @@ impl MemoryLayer {
             return false;
         }
 
-        // Se já estamos no limite, removemos o mais antigo (índice 0)
-        // para abrir espaço — isso é o "buffer circular".
         if self.records.len() >= self.config.capacity {
+            if self.preserve_records {
+                return false;
+            }
             self.records.remove(0);
         }
 
@@ -265,10 +304,13 @@ impl MemoryLayer {
     /// instante atual `now_ms`. Note que isso depende só do tempo (dos
     /// timestamps), nunca da quantidade de frames por segundo.
     pub fn expire(&mut self, now_ms: f64) {
+        if self.preserve_records {
+            return;
+        }
         let mut kept = Vec::new();
         for record in self.records.drain(..) {
             let age_ms = now_ms - record.timestamp_ms;
-            if age_ms <= self.config.max_age_ms {
+            if record.fade_age_ms(age_ms) <= self.config.max_age_ms {
                 kept.push(record);
             }
         }
@@ -282,11 +324,22 @@ impl MemoryLayer {
         let mut result = Vec::new();
         for record in &self.records {
             let age_ms = now_ms - record.timestamp_ms;
-            if age_ms < 0.0 || age_ms > self.config.max_age_ms {
+            if age_ms < 0.0 || (!self.preserve_records && record.fade_age_ms(age_ms) > self.config.max_age_ms) {
                 // Ainda não existia, ou já devia ter expirado.
                 continue;
             }
-            let fade = compute_fade(record, &self.config, age_ms);
+            let mut fade = compute_fade(record, &self.config, age_ms);
+            if self.preserve_records {
+                let floor = 0.35 * self.config.base_weight * record.intensity.clamp(0.0, 1.0);
+                fade.opacity = fade.opacity.max(floor);
+                // Dá a cada imagem estática uma posição fixa ao lado da captura.
+                let seed = record.timestamp_ms * 0.0017;
+                let direction = if seed.sin() < 0.0 { -1.0 } else { 1.0 };
+                let variation = seed.cos() as f32;
+                let shift = self.config.drift_amount * 4.0;
+                fade.offset_x = direction * shift * (1.0 + variation.abs());
+                fade.offset_y = shift * 0.4 * variation;
+            }
             result.push((record.clone(), fade));
         }
         result
@@ -329,9 +382,12 @@ pub struct TemporalMemory {
 
 impl TemporalMemory {
     pub fn new() -> Self {
+        let mut long = MemoryLayer::new(LayerConfig::long_default());
+        // A memória prolongada guarda as primeiras capturas até o fim da sessão.
+        long.preserve_records = true;
         TemporalMemory {
             intermediate: MemoryLayer::new(LayerConfig::intermediate_default()),
-            long: MemoryLayer::new(LayerConfig::long_default()),
+            long,
         }
     }
 
@@ -342,12 +398,10 @@ impl TemporalMemory {
         }
     }
 
-    /// Entrega a mesma captura para as duas camadas. Cada uma decide por
-    /// conta própria (usando `maybe_insert`) se vai realmente guardar ou
-    /// não, de acordo com seu próprio ritmo de captura.
+    /// Oferece o clipe à memória intermediária e seu quadro central à prolongada.
     pub fn insert(&mut self, record: MemoryRecord) {
-        self.intermediate.maybe_insert(record.clone());
-        self.long.maybe_insert(record);
+        self.long.maybe_insert(record.still_frame());
+        self.intermediate.maybe_insert(record);
     }
 
     pub fn expire_all(&mut self, now_ms: f64) {
@@ -372,27 +426,18 @@ impl TemporalMemory {
         let layers = [(LayerKind::Long, &self.long), (LayerKind::Intermediate, &self.intermediate)];
 
         for (kind, layer) in layers {
-            let max_age_ms = layer.config.max_age_ms;
             for (record, fade) in layer.active(now_ms) {
-                let mut age_ratio = fade.age_ms / max_age_ms;
-                if age_ratio < 0.0 {
-                    age_ratio = 0.0;
-                }
-                if age_ratio > 1.0 {
-                    age_ratio = 1.0;
-                }
-
                 all.push(RenderRecord {
                     layer: kind,
                     timestamp_ms: record.timestamp_ms,
                     age_ms: fade.age_ms,
-                    age_ratio: age_ratio as f32,
+                    age_ratio: fade.age_ratio,
                     width: record.width,
                     height: record.height,
                     opacity: fade.opacity,
                     offset_x: fade.offset_x,
                     offset_y: fade.offset_y,
-                    pixels: record.pixels,
+                    pixels: record.playback_frame(fade.age_ms).to_vec(),
                 });
             }
         }
@@ -420,7 +465,8 @@ mod tests {
             timestamp_ms,
             width: 4,
             height: 4,
-            pixels: vec![255; 4 * 4 * 4],
+            pixels: vec![255; 4 * 4 * 4].into(),
+            frame_interval_ms: 0.0,
             intensity: 1.0,
         }
     }
@@ -554,6 +600,30 @@ mod tests {
 
         memory.clear();
         assert_eq!(memory.total_bytes(), 0);
+    }
+
+    #[test]
+    fn long_memories_stay_visible_after_aging_and_reaching_capacity() {
+        let mut memory = TemporalMemory::new();
+        memory.long.config.capacity = 2;
+        memory.long.config.capture_interval_ms = 0.0;
+        for timestamp in [0.0, 1.0, 2.0] {
+            memory.insert(record(timestamp));
+        }
+
+        let initial = memory.long.active(2.0);
+        assert!(initial.iter().all(|(_, fade)| fade.offset_x.abs() >= 0.06));
+        let now = 300_000.0;
+        memory.expire_all(now);
+        let active = memory.collect_active(now);
+        assert_eq!(active.len(), 2);
+        assert_eq!(active[0].timestamp_ms, 0.0);
+        assert_eq!(active[1].timestamp_ms, 1.0);
+        assert!(active.iter().all(|record| record.layer == LayerKind::Long && record.opacity > 0.0));
+        for (record, (_, initial_fade)) in active.iter().zip(initial) {
+            assert_eq!(record.offset_x, initial_fade.offset_x);
+            assert_eq!(record.offset_y, initial_fade.offset_y);
+        }
     }
 
     #[test]

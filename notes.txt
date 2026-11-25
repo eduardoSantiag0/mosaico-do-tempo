@@ -1,0 +1,12 @@
+rustup target add wasm32-unknown-unknown
+cargo install wasm-pack
+
+cd web
+npm install
+npm run dev
+
+cd web && npm run dev
+
+http://localhost:5173
+
+npm run dev:host -> celular

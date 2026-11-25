@@ -46,7 +46,7 @@
   },
   "capture": {
     "memoryMaxDim": 160,
-    "memoryIntervalMs": 500,
+    "memoryIntervalMs": 125,
     "liveMaxDim": 1280,
     "segmentationMaxDim": 256,
     "segmentationIntervalMs": 200
